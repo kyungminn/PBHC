@@ -2,6 +2,7 @@ from typing import Union
 import numpy as np
 import time
 import torch
+import joblib
 
 from unitree_sdk2py.core.channel import ChannelPublisher, ChannelFactoryInitialize
 from unitree_sdk2py.core.channel import ChannelSubscriber, ChannelFactoryInitialize
@@ -28,6 +29,13 @@ from collections import deque
 import onnxruntime as ort
 
 
+def quat_rotate_inverse(q, v):
+    """Rotate vector v by the inverse of quaternion q (w, x, y, z format)."""
+    q_w, q_x, q_y, q_z = q[..., 0], q[..., 1], q[..., 2], q[..., 3]
+    t = 2.0 * np.cross(np.stack([q_x, q_y, q_z], axis=-1), v)
+    return v - q_w[..., None] * t + np.cross(np.stack([q_x, q_y, q_z], axis=-1), t)
+
+
 class Controller:
     def __init__(self, config: Config) -> None:
         self.config = config
@@ -35,12 +43,27 @@ class Controller:
         
         self.motion_file = self.config.motion_file
         self.motion_len = get_motion_len(self.motion_file)
+        
+        # Load full motion data for student model
+        self._load_motion_data()
 
         self.remote_controller = RemoteController()
 
         # Initialize the policy network
-        # self.policy = torch.jit.load(config.policy_path)
         self.policy = ort.InferenceSession(config.policy_path)
+        
+        # Check if this is a student model (requires future_motion_targets and prop_history)
+        self.input_names = [inp.name for inp in self.policy.get_inputs()]
+        self.is_student_model = "future_motion_targets" in self.input_names
+        if self.is_student_model:
+            print(f"Detected student model with inputs: {self.input_names}")
+            # Student model parameters
+            self.future_max_steps = getattr(config, 'future_max_steps', 95)
+            self.future_num_steps = getattr(config, 'future_num_steps', 20)
+            self.history_length = getattr(config, 'history_length', 10)
+        else:
+            print(f"Detected teacher model with inputs: {self.input_names}")
+        
         # Initializing process variables
         self.qj = np.zeros(config.num_actions, dtype=np.float32)
         self.dqj = np.zeros(config.num_actions, dtype=np.float32)
@@ -87,7 +110,7 @@ class Controller:
 
         self.start_time = time.time()
 
-        # Initialize histories for each observation type
+        # Initialize histories for each observation type (for teacher model)
         self.history = {
             "action": deque(maxlen=self.frame_stack-1),
             "omega": deque(maxlen=self.frame_stack-1),
@@ -107,6 +130,135 @@ class Controller:
                     self.history[key].append(torch.zeros(1, 1, dtype=torch.float))
                 else:
                     raise ValueError(f"Not Implement: {key}")
+        
+        # Initialize histories for student model (prop_history)
+        if self.is_student_model:
+            self.student_history = {
+                "base_ang_vel": deque(maxlen=self.history_length),
+                "roll_pitch": deque(maxlen=self.history_length),
+                "dof_pos": deque(maxlen=self.history_length),
+                "dof_vel": deque(maxlen=self.history_length),
+                "actions": deque(maxlen=self.history_length),
+            }
+            for _ in range(self.history_length):
+                self.student_history["base_ang_vel"].append(np.zeros(3, dtype=np.float32))
+                self.student_history["roll_pitch"].append(np.zeros(2, dtype=np.float32))
+                self.student_history["dof_pos"].append(np.zeros(self.config.num_actions, dtype=np.float32))
+                self.student_history["dof_vel"].append(np.zeros(self.config.num_actions, dtype=np.float32))
+                self.student_history["actions"].append(np.zeros(self.config.num_actions, dtype=np.float32))
+
+    def _load_motion_data(self):
+        """Load full motion data for future motion targets computation."""
+        motion_data = joblib.load(self.motion_file)
+        key = list(motion_data.keys())[0]
+        data = motion_data[key]
+        
+        self.motion_fps = data["fps"]
+        self.motion_dt = 1.0 / self.motion_fps
+        self.motion_num_frames = data["root_rot"].shape[0]
+        
+        # Store motion data
+        self.motion_root_pos = data["root_trans_offset"]  # (num_frames, 3)
+        self.motion_root_rot = data["root_rot"]  # (num_frames, 4) - quaternion (w, x, y, z)
+        self.motion_dof_pos = data["dof"]  # (num_frames, num_dofs)
+        
+        # Compute velocities from position differences
+        self.motion_root_vel = np.zeros_like(self.motion_root_pos)
+        self.motion_root_vel[1:] = (self.motion_root_pos[1:] - self.motion_root_pos[:-1]) / self.motion_dt
+        
+        # Compute angular velocities (simplified - from quaternion differences)
+        self.motion_root_ang_vel = np.zeros((self.motion_num_frames, 3), dtype=np.float32)
+        
+        print(f"Loaded motion data: {self.motion_num_frames} frames at {self.motion_fps} fps")
+    
+    def _get_motion_frame_idx(self, time_offset=0.0):
+        """Get the motion frame index for the current time + offset."""
+        current_time = (self.counter * self.config.control_dt + time_offset) % self.motion_len
+        frame_idx = int(current_time / self.motion_dt)
+        return min(frame_idx, self.motion_num_frames - 1)
+    
+    def _quat_to_roll_pitch(self, quat):
+        """Convert quaternion (w, x, y, z) to roll and pitch angles."""
+        w, x, y, z = quat[..., 0], quat[..., 1], quat[..., 2], quat[..., 3]
+        
+        # Roll (x-axis rotation)
+        sinr_cosp = 2.0 * (w * x + y * z)
+        cosr_cosp = 1.0 - 2.0 * (x * x + y * y)
+        roll = np.arctan2(sinr_cosp, cosr_cosp)
+        
+        # Pitch (y-axis rotation)
+        sinp = 2.0 * (w * y - z * x)
+        sinp = np.clip(sinp, -1.0, 1.0)
+        pitch = np.arcsin(sinp)
+        
+        return np.stack([roll, pitch], axis=-1)
+    
+    def _get_future_motion_targets(self):
+        """Compute future motion targets for student model."""
+        # Sample future timesteps: linspace from 1 to future_max_steps with future_num_steps points
+        tar_steps = np.linspace(1, self.future_max_steps, self.future_num_steps, dtype=np.int32)
+        
+        future_root_height = []
+        future_roll_pitch = []
+        future_base_lin_vel = []
+        future_base_yaw_vel = []
+        future_dof_pos = []
+        
+        for step in tar_steps:
+            time_offset = step * self.config.control_dt
+            frame_idx = self._get_motion_frame_idx(time_offset)
+            
+            # Root height
+            root_height = self.motion_root_pos[frame_idx, 2:3]
+            future_root_height.append(root_height)
+            
+            # Roll pitch from quaternion
+            roll_pitch = self._quat_to_roll_pitch(self.motion_root_rot[frame_idx])
+            future_roll_pitch.append(roll_pitch)
+            
+            # Root linear velocity (in local frame)
+            root_vel = self.motion_root_vel[frame_idx]
+            root_rot = self.motion_root_rot[frame_idx]
+            local_vel = quat_rotate_inverse(root_rot[np.newaxis], root_vel[np.newaxis])[0]
+            future_base_lin_vel.append(local_vel)
+            
+            # Yaw angular velocity
+            yaw_vel = self.motion_root_ang_vel[frame_idx, 2:3]
+            future_base_yaw_vel.append(yaw_vel)
+            
+            # DOF positions
+            dof_pos = self.motion_dof_pos[frame_idx]
+            future_dof_pos.append(dof_pos)
+        
+        # Concatenate all: (future_num_steps, dim) -> flatten to (1, total_dim)
+        future_motion_targets = np.concatenate([
+            np.array(future_root_height).flatten(),      # 1 * 20 = 20
+            np.array(future_roll_pitch).flatten(),       # 2 * 20 = 40
+            np.array(future_base_lin_vel).flatten(),     # 3 * 20 = 60
+            np.array(future_base_yaw_vel).flatten(),     # 1 * 20 = 20
+            np.array(future_dof_pos).flatten(),          # 23 * 20 = 460
+        ], axis=0).astype(np.float32)
+        
+        return future_motion_targets.reshape(1, -1)
+    
+    def _get_prop_history(self, base_ang_vel, roll_pitch, dof_pos, dof_vel):
+        """Get proprioceptive history for student model."""
+        # Update history (newest first)
+        self.student_history["base_ang_vel"].appendleft(base_ang_vel.copy())
+        self.student_history["roll_pitch"].appendleft(roll_pitch.copy())
+        self.student_history["dof_pos"].appendleft(dof_pos.copy())
+        self.student_history["dof_vel"].appendleft(dof_vel.copy())
+        self.student_history["actions"].appendleft(self.action.copy())
+        
+        # Concatenate history: for each type, concat all timesteps
+        # Order: base_ang_vel, roll_pitch, dof_pos, dof_vel, actions (alphabetical by key)
+        history_parts = []
+        for key in ["actions", "base_ang_vel", "dof_pos", "dof_vel", "roll_pitch"]:
+            for i in range(self.history_length):
+                history_parts.append(self.student_history[key][i])
+        
+        prop_history = np.concatenate(history_parts, axis=0).astype(np.float32)
+        return prop_history.reshape(1, -1)
 
     def LowStateHgHandler(self, msg: LowStateHG):
         self.low_state = msg
@@ -256,7 +408,7 @@ class Controller:
             dim=1
         )
 
-        # 5. Update the history
+        # 5. Update the history (for teacher model)
         self.history["action"].appendleft(curr_obs_tensor[:, :num_actions])
         self.history["omega"].appendleft(curr_obs_tensor[:, num_actions:num_actions+3])
         self.history["qj"].appendleft(curr_obs_tensor[:, num_actions+3:num_actions+3+num_actions])
@@ -265,8 +417,39 @@ class Controller:
         self.history["ref_motion_phase"].appendleft(curr_obs_tensor[:, -1].unsqueeze(0))
         
         # 6. Get policy's inference
-        input_name = self.policy.get_inputs()[0].name
-        outputs = self.policy.run(None, {input_name: self.obs_buf.numpy()})
+        if self.is_student_model:
+            # Student model: requires actor_obs, future_motion_targets, prop_history
+            
+            # Compute roll_pitch for history
+            roll_pitch = np.array([
+                np.arctan2(2.0 * (quat[0] * quat[1] + quat[2] * quat[3]), 
+                          1.0 - 2.0 * (quat[1]**2 + quat[2]**2)),
+                np.arcsin(np.clip(2.0 * (quat[0] * quat[2] - quat[3] * quat[1]), -1.0, 1.0))
+            ], dtype=np.float32)
+            
+            # Get future motion targets
+            future_motion_targets = self._get_future_motion_targets()
+            
+            # Get prop_history (also updates history)
+            prop_history = self._get_prop_history(
+                base_ang_vel=ang_vel.flatten(),
+                roll_pitch=roll_pitch,
+                dof_pos=qj_obs,
+                dof_vel=dqj_obs
+            )
+            
+            # Prepare inputs
+            inputs = {
+                "actor_obs": self.obs_buf.numpy(),
+                "future_motion_targets": future_motion_targets,
+                "prop_history": prop_history
+            }
+            outputs = self.policy.run(None, inputs)
+        else:
+            # Teacher model: only requires actor_obs
+            input_name = self.policy.get_inputs()[0].name
+            outputs = self.policy.run(None, {input_name: self.obs_buf.numpy()})
+        
         self.action = outputs[0].squeeze()
         target_dof_pos = self.default_angles + self.action * self.config.action_scale
 

@@ -107,4 +107,4 @@ data/
 !logs/MotionTracking/phuma_student/
 !logs/MotionTracking/phuma_student/**
 !motion_data/
-!motion_data/*.pkl
+!motion_data/*.pklunitree_sdk2_python/

@@ -43,3 +43,8 @@ class Config:
             self.frame_stack = config.get("frame_stack", 5)
             self.motion_file = config["motion_file"]
             self.clip_action_limit = config["clip_action_limit"]
+            
+            # Student model parameters (optional, with defaults)
+            self.future_max_steps = config.get("future_max_steps", 95)
+            self.future_num_steps = config.get("future_num_steps", 20)
+            self.history_length = config.get("history_length", 10)
