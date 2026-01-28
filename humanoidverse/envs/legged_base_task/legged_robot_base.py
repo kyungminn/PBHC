@@ -541,7 +541,11 @@ class LeggedRobotBase(BaseTask):
             self.simulator.dof_pos[env_ids] = target_state[..., 0]
             self.simulator.dof_vel[env_ids] = target_state[..., 1]
         else:
-            self.simulator.dof_pos[env_ids] = self.default_dof_pos * torch_rand_float(0.5, 1.5, (len(env_ids), self.num_dof), device=str(self.device))
+            # In evaluation mode, use exact default positions for stability
+            if self.is_evaluating:
+                self.simulator.dof_pos[env_ids] = self.default_dof_pos.unsqueeze(0).expand(len(env_ids), -1)
+            else:
+                self.simulator.dof_pos[env_ids] = self.default_dof_pos * torch_rand_float(0.5, 1.5, (len(env_ids), self.num_dof), device=str(self.device))
             # self.simulator.dof_pos[env_ids] = self.default_dof_pos
             # import ipdb; ipdb.set_trace()
             
@@ -564,13 +568,18 @@ class LeggedRobotBase(BaseTask):
             if self.custom_origins:
                 self.simulator.robot_root_states[env_ids] = self.base_init_state
                 self.simulator.robot_root_states[env_ids, :3] += self.env_origins[env_ids]
-                self.simulator.robot_root_states[env_ids, :2] += torch_rand_float(-1., 1., (len(env_ids), 2), device=str(self.device)) # xy position within 1m of the center
+                # In evaluation mode, don't add random xy offset for stability
+                if not self.is_evaluating:
+                    self.simulator.robot_root_states[env_ids, :2] += torch_rand_float(-1., 1., (len(env_ids), 2), device=str(self.device)) # xy position within 1m of the center
             else:
                 self.simulator.robot_root_states[env_ids] = self.base_init_state
                 self.simulator.robot_root_states[env_ids, :3] += self.env_origins[env_ids]
             # base velocities
-            
-            self.simulator.robot_root_states[env_ids, 7:13] = torch_rand_float(-0.5, 0.5, (len(env_ids), 6), device=str(self.device)) # [7:10]: lin vel, [10:13]: ang vel
+            # In evaluation mode, set velocities to zero for stability
+            if self.is_evaluating:
+                self.simulator.robot_root_states[env_ids, 7:13] = 0.0
+            else:
+                self.simulator.robot_root_states[env_ids, 7:13] = torch_rand_float(-0.5, 0.5, (len(env_ids), 6), device=str(self.device)) # [7:10]: lin vel, [10:13]: ang vel
 
 
     def _reset_tasks_callback(self, env_ids):

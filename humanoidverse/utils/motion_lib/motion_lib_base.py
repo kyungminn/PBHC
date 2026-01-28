@@ -93,7 +93,18 @@ class MotionLibBase:
         self._num_unique_motions = len(self._motion_data_list)
         if self.mode == MotionlibMode.directory:
             self._motion_data_load = joblib.load(self._motion_data_load[0])  # set self._motion_data_load to a sample of the data
+        
+        # Check if any motion has env_objects
+        self.has_env_objects = False
+        if self.mode == MotionlibMode.file:
+            for motion_data in self._motion_data_list:
+                if isinstance(motion_data, dict) and 'env_objects' in motion_data:
+                    self.has_env_objects = True
+                    break
+        
         logger.info(f"Loaded {self._num_unique_motions} motions")
+        if self.has_env_objects:
+            logger.info("Motion data contains env_objects")
 
     def setup_constants(self, fix_height=FixHeightMode.full_fix, multi_thread=True):
         self.fix_height = fix_height

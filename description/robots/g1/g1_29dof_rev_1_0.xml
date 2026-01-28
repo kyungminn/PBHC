@@ -125,7 +125,7 @@
           </body>
         </body>
       </body>
-      <body name="waist_yaw_link" pos="0 0 0.044">
+      <body name="waist_yaw_link">
         <inertial pos="0.003494 0.000233 0.018034" quat="0.289697 0.591001 -0.337795 0.672821" mass="0.214" diaginertia="0.000163531 0.000107714 0.000102205"/>
         <joint name="waist_yaw_joint" pos="0 0 0" axis="0 0 1" range="-2.618 2.618" actuatorfrcrange="-88 88"/>
         <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.7 0.7 0.7 1" mesh="waist_yaw_link"/>
@@ -275,12 +275,12 @@
   </sensor>
 
 
-  <!-- setup scene
+  <!-- setup scene -->
   <statistic center="1.0 0.7 1.0" extent="0.8"/>
   <visual>
     <headlight diffuse="0.6 0.6 0.6" ambient="0.1 0.1 0.1" specular="0.9 0.9 0.9"/>
     <rgba haze="0.15 0.25 0.35 1"/>
-    <global azimuth="-140" elevation="-20"/>
+    <global azimuth="-140" elevation="-20" offwidth="2560" offheight="1920"/>
   </visual>
   <asset>
     <texture type="skybox" builtin="flat" rgb1="0 0 0" rgb2="0 0 0" width="512" height="3072"/>
@@ -290,5 +290,5 @@
   <worldbody>
     <light pos="1 0 3.5" dir="0 0 -1" directional="true"/>
     <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"/>
-  </worldbody> -->
+  </worldbody>
 </mujoco>

@@ -10,7 +10,9 @@ def GetZeroPolicy(name: str)->URCIPolicyObs:
     import numpy as np
     
     def policy_fn(obs_dict: Dict[str, np.ndarray]) -> np.ndarray:
-        action = np.zeros((1,23))
+        # Dynamically determine DOF from observation shape if available
+        num_dofs = 29 if 'num_dofs' in obs_dict and obs_dict['num_dofs'] == 29 else 23
+        action = np.zeros((1, num_dofs))
         return action
         
     def obs_fn(robot: URCIRobot)->np.ndarray:
@@ -26,7 +28,8 @@ def GetSinPolicy(name: str)->URCIPolicyObs:
     # Usage: $EVALMJC=_external_zero
     import numpy as np
     
-    action = np.zeros((1,23))
+    # Default to 23 DOF, will be resized if needed
+    action = np.zeros((1, 23))
         
     def policy_fn(obs_dict: Dict[str, np.ndarray]) -> np.ndarray:
         timer = obs_dict['actor_obs'][0]

@@ -119,6 +119,12 @@ class ViewerPlugin:
         self.viewer.cam.distance = 3.0        
         self.viewer.cam.azimuth = 180                         # 可根据需要调整角度
         self.viewer.cam.elevation = -20                      # 负值表示从上往下看
+        
+        # Speed up playback (default is 1.0x)
+        if hasattr(self.viewer, '_run_speed'):
+            self.viewer._run_speed = 2.0  # 3x speed
+        if hasattr(self.viewer, '_render_every_frame'):
+            self.viewer._render_every_frame = False
         def _key_callback(window, key, scancode, action, mods):
             if action == glfw.PRESS:
                 #  Keyboard mapping:
@@ -315,13 +321,38 @@ class MujocoRobot(URCIRobot, ViewerPlugin):
 
 
     def _reset(self):
-        self.data.qpos[:3] = np.array(self.cfg.robot.init_state.pos)
-        self.data.qpos[3:7] = np.array(self.cfg.robot.init_state.rot)[[3,0,1,2]] # XYZW to WXYZ
-        # self.data.qpos[3:7] = np.array([0,0,0.7184,-0.6956])[[3,0,1,2]]  #DEBUG: init quat of JingjiTaiji
-        # self.data.qpos[3:7] = np.array([0,0,0.7455,-0.6665])[[3,0,1,2]]  #DEBUG: init quat of NewTaiji
-        # self.data.qpos[3:7] = np.array([0,0,0.6894,0.7244])[[3,0,1,2]]  #DEBUG: init quat of Shaolinquan
-        self.data.qpos[7:] = self.dof_init_pose
-        self.data.qvel[:]   = 0
+        # Initialize from motion data's first frame if motion lib is available
+        if hasattr(self, 'motion_lib') and self.motion_lib is not None:
+            motion_times = torch.tensor(0.0, dtype=torch.float32)  # First frame
+            motion_ids = torch.zeros((1), dtype=torch.int32)
+            motion_res = self.motion_lib.get_motion_state(motion_ids, motion_times)
+            
+            # Set root position and rotation from motion data
+            root_pos = motion_res["root_pos"][0].numpy()
+            root_rot = motion_res["root_rot"][0].numpy()  # XYZW
+            dof_pos = motion_res["dof_pos"][0].numpy()
+            
+            self.data.qpos[:3] = root_pos
+            self.data.qpos[3:7] = root_rot[[3,0,1,2]]  # XYZW to WXYZ
+            self.data.qpos[7:] = dof_pos
+            
+            # Set velocities from motion data
+            root_vel = motion_res["root_vel"][0].numpy()
+            root_ang_vel = motion_res["root_ang_vel"][0].numpy()
+            dof_vel = motion_res["dof_vel"][0].numpy()
+            
+            self.data.qvel[:3] = root_vel
+            self.data.qvel[3:6] = root_ang_vel
+            self.data.qvel[6:] = dof_vel
+            
+            # logger.info(f"Reset from motion data: dof_pos shape={dof_pos.shape}, mean={dof_pos.mean():.4f}")
+        else:
+            # Fallback to config-based initialization
+            self.data.qpos[:3] = np.array(self.cfg.robot.init_state.pos)
+            self.data.qpos[3:7] = np.array(self.cfg.robot.init_state.rot)[[3,0,1,2]] # XYZW to WXYZ
+            self.data.qpos[7:] = self.dof_init_pose
+            self.data.qvel[:]   = 0
+        
         self.cmd = np.array(self.cfg.deploy.defcmd)
         
         if self.RAND_IMU:
@@ -399,13 +430,32 @@ class MujocoRobot(URCIRobot, ViewerPlugin):
                                 f"dq\t\t: {self.dq[motor_idx]}\n")
                 # breakpoint()  
         
-    _motor_offset = np.array([
+    # Motor offset for 23 DOF
+    _motor_offset_23 = np.array([
         3, 0.5, 2, -0.5, -1, 1,
         -2, 1, -.3, 1, 0.3, 0.1,
         0, 0, 0,
         0, 1, 0, -1,
         -2, 0, 0, 0
     ])*(np.pi/180)   # [23]
+    
+    # Motor offset for 29 DOF (23 + 6 wrist joints)
+    _motor_offset_29 = np.array([
+        3, 0.5, 2, -0.5, -1, 1,      # left leg (6)
+        -2, 1, -.3, 1, 0.3, 0.1,     # right leg (6)
+        0, 0, 0,                      # waist (3)
+        0, 1, 0, -1,                  # left arm (4)
+        0, 0, 0,                      # left wrist (3)
+        -2, 0, 0, 0,                  # right arm (4)
+        0, 0, 0                       # right wrist (3)
+    ])*(np.pi/180)   # [29]
+    
+    @property
+    def _motor_offset(self):
+        if self.num_actions == 29:
+            return self._motor_offset_29
+        else:
+            return self._motor_offset_23
         
     def _apply_action(self, target_q):
         

@@ -95,7 +95,14 @@ class URCIRobot:
         else: 
             self.save_motion = False
         self.anchor_index = 0  # root
-        self.key_body_id = [4, 6, 10, 12, 19, 23, 24, 25, 26]
+        # Dynamically get key_body_id from config
+        if hasattr(cfg.robot, 'key_bodies') and hasattr(self, 'body_names'):
+            self.key_body_id = [self.body_names.index(name) for name in cfg.robot.key_bodies if name in self.body_names]
+            logger.info(f"key_body_id (from config): {self.key_body_id}, len={len(self.key_body_id)}")
+        else:
+            # Fallback to hardcoded for 23 DOF
+            self.key_body_id = [4, 6, 10, 12, 19, 23, 24, 25, 26]
+            logger.warning(f"Using hardcoded key_body_id: {self.key_body_id}")
         self.map_dof_to_scale()
         
     def map_dof_to_scale(self):
@@ -212,7 +219,18 @@ class URCIRobot:
         
         self._reset()
         
-        self.act[:] = 0
+        # Update state to get current q after reset
+        if hasattr(self, '_get_state'):
+            self._get_state()
+        
+        # Initialize action to current DOF position (converted from joint space to action space)
+        # action * action_scale + dof_init_pose = q
+        # => action = (q - dof_init_pose) / action_scale
+        if hasattr(self, 'q') and hasattr(self, 'dof_init_pose') and hasattr(self, 'action_scale'):
+            self.act[:] = (self.q - self.dof_init_pose) / self.action_scale
+            logger.info(f"Initialized act from current q: mean={self.act.mean():.4f}, range=[{self.act.min():.4f}, {self.act.max():.4f}]")
+        else:
+            self.act[:] = 0
         self.history_handler.reset([0])
         self.timer: int = 0
         self.cmd: np.ndarray = np.array(self.cfg.deploy.defcmd)
@@ -274,6 +292,22 @@ class URCIRobot:
         # self.act[:] = 0
         # self.history_handler.reset([0])
         self.motion_lib = self.motion_libs[self._ref_pid]
+        
+        # Update dof_axis and key_body_id from the loaded motion lib
+        if self.motion_lib is not None:
+            mp = self.motion_lib.mesh_parsers
+            if hasattr(mp, 'dof_axis'):
+                dof_axis = mp.dof_axis
+                if hasattr(dof_axis, 'numpy'):  # It's a tensor
+                    self._dof_axis = dof_axis.numpy().astype(np.float32)
+                else:
+                    self._dof_axis = np.array(dof_axis).astype(np.float32)
+                logger.info(f"Updated dof_axis in routing: shape={self._dof_axis.shape}")
+            if hasattr(mp, 'body_names_augment') and hasattr(self.cfg.robot, 'key_bodies'):
+                key_bodies = list(self.cfg.robot.key_bodies)
+                self.key_body_id = [mp.body_names_augment.index(name) for name in key_bodies if name in mp.body_names_augment]
+                logger.info(f"Updated key_body_id in routing: {self.key_body_id}, len={len(self.key_body_id)}")
+        
         self.timer: int = 0
         self.cmd: np.ndarray = np.array(self.cfg.deploy.defcmd)
         self.cmd[3]=self.rpy[2]
@@ -282,6 +316,10 @@ class URCIRobot:
             self.ref_motion_phase = 0.
             self.history_handler.history['ref_motion_phase']*=0
         self.KickMotionLib()
+        
+        # Reset robot to motion data's first frame now that motion_lib is set
+        if hasattr(self, '_reset') and self.motion_lib is not None:
+            self._reset()
         # self.UpdateObsWoHistory() # Recompute obs with new _obs_cfg_obs
         ...
     
@@ -312,9 +350,6 @@ class URCIRobot:
             # (Pdb) sorted(obs_config)
             # ['actions', 'base_ang_vel', 'base_lin_vel', 'dif_local_rigid_body_pos', 'dof_pos', 'dof_vel', 'dr_base_com', 'dr_ctrl_delay', 'dr_friction', 'dr_kd', 'dr_kp', 'dr_link_mass', 'history_critic', 'local_ref_rigid_body_pos', 'projected_gravity', 'ref_motion_phase']
             
-            # print("obs_keys", obs_keys, self.obs_buf_dict_raw[obs_key])            
-            # print("obs_keys:", obs_keys)
-            # print("obs shape:", {key: self.obs_buf_dict_raw[obs_key][key].shape for key in obs_keys})            
             self.obs_buf_dict[obs_key] = torch.cat([self.obs_buf_dict_raw[obs_key][key] for key in obs_keys], dim=-1)
             
             
@@ -397,19 +432,21 @@ class URCIRobot:
         current_yaw = self.rpy[2]
         self.relyaw = current_yaw - self.ref_init_yaw
         
-        relyaw_heading_inv_quat = calc_yaw_heading_quat_inv(torch.from_numpy(self.relyaw).to(dtype=torch.float32).unsqueeze(0))
-        relyaw_heading_inv_quat_expand = relyaw_heading_inv_quat.unsqueeze(1).expand(-1, 27, -1).reshape(-1, 4)
-
-        heading_inv_rot = calc_heading_quat_inv(torch.from_numpy(self.quat).to(dtype=torch.float32).unsqueeze(0), w_last=True) #xyzw
-        # # expand to (B*num_rigid_bodies, 4) for fatser computation in jit
-        heading_inv_rot_expand = heading_inv_rot.unsqueeze(1).expand(-1, 27, -1).reshape(-1, 4)
-
-
         ref_joint_pos = motion_res["dof_pos"] # [num_envs, num_dofs]
         ref_joint_vel = motion_res["dof_vel"] # [num_envs, num_dofs]
         ref_body_vel_extend = motion_res["body_vel_t"] # [num_envs, num_markers, 3]
         ref_root_rot = motion_res["root_rot"]  # [1, 4] # xyzw
         ref_root_pos = motion_res["root_pos"]  # [1, 3]
+        
+        # Use number of bodies from motion data (includes extended bodies)
+        num_bodies_in_motion = ref_body_vel_extend.shape[1] if len(ref_body_vel_extend.shape) > 2 else ref_body_vel_extend.shape[0] // 3
+        
+        relyaw_heading_inv_quat = calc_yaw_heading_quat_inv(torch.from_numpy(self.relyaw).to(dtype=torch.float32).unsqueeze(0))
+        relyaw_heading_inv_quat_expand = relyaw_heading_inv_quat.unsqueeze(1).expand(-1, num_bodies_in_motion, -1).reshape(-1, 4)
+
+        heading_inv_rot = calc_heading_quat_inv(torch.from_numpy(self.quat).to(dtype=torch.float32).unsqueeze(0), w_last=True) #xyzw
+        # # expand to (B*num_rigid_bodies, 4) for fatser computation in jit
+        heading_inv_rot_expand = heading_inv_rot.unsqueeze(1).expand(-1, num_bodies_in_motion, -1).reshape(-1, 4)
         
         global_ref_body_vel = ref_body_vel_extend.view(1, -1, 3)
         local_ref_rigid_body_vel_flat = my_quat_rotate(heading_inv_rot_expand.view(-1, 4), global_ref_body_vel.view(-1, 3))
@@ -449,7 +486,7 @@ class URCIRobot:
         assert self.cfg is not None or not isinstance(self.cfg, OmegaConf), "cfg is not set"
         
         assert self.num_dofs is not None, "num_dofs is not set"
-        assert self.num_dofs == 23, "In policy level, only 23 dofs are supported for now"
+        assert self.num_dofs in [23, 29], f"In policy level, only 23 or 29 dofs are supported, got {self.num_dofs}"
         assert self.kp is not None and type(self.kp) == np.ndarray and self.kp.shape == (self.num_dofs,), "kp is not set"
         assert self.kd is not None and type(self.kd) == np.ndarray and self.kd.shape == (self.num_dofs,), "kd is not set"
         
@@ -469,7 +506,7 @@ class URCIRobot:
         self.dof_names = self.cfg.robot.dof_names
         self.num_bodies = len(self.body_names)
         self.num_dofs = len(self.dof_names)
-        assert self.num_dofs == 23, "Only 23 dofs are supported for now"
+        assert self.num_dofs in [23, 29], f"Only 23 or 29 dofs are supported, got {self.num_dofs}"
         
         
         dof_init_pose = cfg_init_state.default_joint_angles
@@ -516,18 +553,23 @@ class URCIRobot:
         self.relyaw = np.zeros(1,dtype=np.float32)
         self.dif_joint_angles = torch.zeros(self.num_dofs, dtype=torch.float32)
         self.dif_joint_velocities = torch.zeros(self.num_dofs, dtype=torch.float32)
-        self._obs_global_ref_body_vel = torch.zeros(27*3, dtype=torch.float32)  # 27 rigid bodies, each has 3 velocity components
-        self._obs_local_ref_rigid_body_vel = torch.zeros(27*3, dtype=torch.float32)
-        self._obs_local_ref_rigid_body_pos_relyaw = torch.zeros(27*3, dtype=torch.float32)
+        # num_bodies varies: 27 for 23 DOF, 30 for 29 DOF; num_key_bodies: 9 for 23 DOF, 11 for 29 DOF
+        self._obs_global_ref_body_vel = torch.zeros(self.num_bodies*3, dtype=torch.float32)  # rigid bodies, each has 3 velocity components
+        self._obs_local_ref_rigid_body_vel = torch.zeros(self.num_bodies*3, dtype=torch.float32)
+        self._obs_local_ref_rigid_body_pos_relyaw = torch.zeros(self.num_bodies*3, dtype=torch.float32)
         self._obs_future_motion_root_height = torch.zeros(1, dtype=torch.float32)
         self._obs_future_motion_roll_pitch = torch.zeros(2, dtype=torch.float32)
         self._obs_future_motion_base_lin_vel = torch.zeros(3, dtype=torch.float32)
         self._obs_future_motion_base_ang_vel = torch.zeros(3, dtype=torch.float32)
         self._obs_future_motion_base_yaw_vel = torch.zeros(1, dtype=torch.float32)
-        self._obs_future_motion_dof_pos = torch.zeros(23, dtype=torch.float32)
-        self._obs_future_motion_local_ref_rigid_body_pos = torch.zeros(27 * 3, dtype=torch.float32)
-        self._obs_future_motion_local_ref_key_body_pos = torch.zeros(9 * 3, dtype=torch.float32)
-        self._obs_next_step_ref_motion = torch.zeros(111, dtype=torch.float32)
+        self._obs_future_motion_dof_pos = torch.zeros(self.num_dofs, dtype=torch.float32)
+        self._obs_future_motion_local_ref_rigid_body_pos = torch.zeros(self.num_bodies * 3, dtype=torch.float32)
+        num_key_bodies = len(self.cfg.robot.key_bodies) if hasattr(self.cfg.robot, 'key_bodies') else 9
+        self.num_key_bodies = num_key_bodies
+        self._obs_future_motion_local_ref_key_body_pos = torch.zeros(num_key_bodies * 3, dtype=torch.float32)
+        # _obs_next_step_ref_motion: 1 (root_height) + 2 (roll_pitch) + 3 (root_vel) + 1 (yaw_vel) + num_dofs + num_key_bodies * 3
+        next_step_ref_motion_dim = 1 + 2 + 3 + 1 + self.num_dofs + num_key_bodies * 3
+        self._obs_next_step_ref_motion = torch.zeros(next_step_ref_motion_dim, dtype=torch.float32)
         self._obs_anchor_ref_pos = torch.zeros(3, dtype=torch.float32)
         self._obs_anchor_ref_rot = torch.zeros(6, dtype=torch.float32)
         ...
@@ -559,7 +601,22 @@ class URCIRobot:
             
             
         assert len(self.motion_libs) == len(cfg_policies), f"{len(self.motion_libs)=} != {len(cfg_policies)=}"
-        # breakpoint()
+        
+        # Update key_body_id from motion lib's augmented body names
+        if self.motion_libs and self.motion_libs[0] is not None:
+            mp = self.motion_libs[0].mesh_parsers
+            if hasattr(mp, 'body_names_augment') and hasattr(self.cfg.robot, 'key_bodies'):
+                key_bodies = list(self.cfg.robot.key_bodies)
+                self.key_body_id = [mp.body_names_augment.index(name) for name in key_bodies if name in mp.body_names_augment]
+                logger.info(f"key_body_id (from motion lib): {self.key_body_id}, len={len(self.key_body_id)}")
+            # Also update dof_axis from motion lib
+            if hasattr(mp, 'dof_axis'):
+                dof_axis = mp.dof_axis
+                if hasattr(dof_axis, 'numpy'):  # It's a tensor
+                    self._dof_axis = dof_axis.numpy().astype(np.float32)
+                else:
+                    self._dof_axis = np.array(dof_axis).astype(np.float32)
+                logger.info(f"Updated dof_axis from motion lib: shape={self._dof_axis.shape}")
         
         
     # ---- Save Motion System----
@@ -580,8 +637,14 @@ class URCIRobot:
         OmegaConf.save(self.cfg, self.save_motion_dir / "config.yaml")
         
 
-        self._dof_axis = np.load('humanoidverse/utils/motion_lib/dof_axis.npy', allow_pickle=True)
-        self._dof_axis = self._dof_axis.astype(np.float32)
+        # Try to get dof_axis from motion lib, fallback to file
+        if self.motion_libs and self.motion_libs[0] is not None and hasattr(self.motion_libs[0].mesh_parsers, 'dof_axis'):
+            self._dof_axis = self.motion_libs[0].mesh_parsers.dof_axis.astype(np.float32)
+            logger.info(f"Loaded dof_axis from motion lib: shape={self._dof_axis.shape}")
+        else:
+            self._dof_axis = np.load('humanoidverse/utils/motion_lib/dof_axis.npy', allow_pickle=True)
+            self._dof_axis = self._dof_axis.astype(np.float32)
+            logger.warning(f"Loaded dof_axis from file (fallback): shape={self._dof_axis.shape}")
 
         self.num_augment_joint = len(self.cfg.robot.motion.extend_config)
         self.motions_for_saving: Dict[str, List[np.ndarray]] = {'root_trans_offset':[], 'pose_aa':[], 'dof':[], 'root_rot':[], 'actor_obs':[], 'action':[], 'terminate':[],
@@ -834,8 +897,9 @@ class URCIRobot:
         root_vel = quat_rotate_inverse(flat_root_rot, flat_root_vel).view(num_steps, 3)
         root_ang_vel = quat_rotate_inverse(flat_root_rot, flat_root_ang_vel).view(num_steps, 3)
 
-        robot_anchor_pos_w_repeat = ref_body_pos_extend[..., self.anchor_index, :][..., None, :].repeat(1, 27, 1)
-        robot_anchor_quat_w_repeat = ref_body_rot_extend[..., self.anchor_index, :][..., None, :].repeat(1, 27, 1)
+        num_bodies_in_motion = ref_body_pos_extend.shape[1]  # Dynamic based on motion data
+        robot_anchor_pos_w_repeat = ref_body_pos_extend[..., self.anchor_index, :][..., None, :].repeat(1, num_bodies_in_motion, 1)
+        robot_anchor_quat_w_repeat = ref_body_rot_extend[..., self.anchor_index, :][..., None, :].repeat(1, num_bodies_in_motion, 1)
         local_ref_key_body_pos = quat_apply(
             quat_inverse(robot_anchor_quat_w_repeat, w_last=True),
             ref_body_pos_extend - robot_anchor_pos_w_repeat,
