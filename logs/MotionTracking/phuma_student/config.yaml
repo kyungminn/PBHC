@@ -610,7 +610,7 @@ robot:
   - elbow
   motion:
     motion_lib_type: origin
-    motion_file: /home/kyungminlee/PBHC/data/processed_phuma/train
+    motion_file: motion_data/g1_ue_walk_23dof.pkl 
     asset:
       assetRoot: description/robots/g1/
       assetFileName: g1_23dof_lock_wrist_fitmotionONLY.xml

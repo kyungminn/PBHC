@@ -29,6 +29,10 @@ from common.motion_lib_helper import get_motion_len
 from config import Config
 from collections import deque
 import onnxruntime as ort
+from omegaconf import DictConfig
+
+# Import motion library for computing key body positions
+from humanoidverse.utils.motion_lib.motion_lib_robot_WJX import MotionLibRobotWJX as MotionLibRobot
 
 
 def quat_rotate_inverse(q, v):
@@ -163,18 +167,46 @@ class Controller:
             print(f"Observation logging enabled. Will save to: {self.obs_log_file}")
 
     def _load_motion_data(self):
-        """Load full motion data for future motion targets computation."""
+        """Load full motion data for future motion targets computation using MotionLib."""
+        # Key body indices (same as urcirobot.py)
+        self.key_body_id = [4, 6, 10, 12, 19, 23, 24, 25, 26]
+        self.anchor_index = 0  # root
+        
+        # Load motion library for accurate body position computation
+        motion_lib_cfg = DictConfig({
+            'motion_file': self.motion_file,
+            'asset': {
+                'assetRoot': 'description/robots/g1/',
+                'assetFileName': 'g1_23dof_lock_wrist_fitmotionONLY.xml',
+            },
+            'extend_config': [
+                {'joint_name': 'left_hand_link', 'parent_name': 'left_elbow_link', 
+                 'pos': [0.25, 0.0, 0.0], 'rot': [1.0, 0.0, 0.0, 0.0]},
+                {'joint_name': 'right_hand_link', 'parent_name': 'right_elbow_link',
+                 'pos': [0.25, 0.0, 0.0], 'rot': [1.0, 0.0, 0.0, 0.0]},
+                {'joint_name': 'head_link', 'parent_name': 'torso_link',
+                 'pos': [0.0, 0.0, 0.35], 'rot': [1.0, 0.0, 0.0, 0.0]},
+            ],
+        })
+        
+        self.motion_lib = MotionLibRobot(motion_lib_cfg, num_envs=1, device='cpu')
+        self.motion_lib.load_motions(random_sample=False)
+        
+        # Get motion parameters from library
+        self.motion_fps = int(1.0 / self.motion_lib._motion_dt[0].item())
+        self.motion_dt = self.motion_lib._motion_dt[0].item()
+        self.motion_num_frames = self.motion_lib._motion_num_frames[0].item()
+        
+        # Also load raw motion data for backward compatibility
         motion_data = joblib.load(self.motion_file)
         key = list(motion_data.keys())[0]
         data = motion_data[key]
         
-        self.motion_fps = data["fps"]
-        self.motion_dt = 1.0 / self.motion_fps
-        self.motion_num_frames = data["root_rot"].shape[0]
-        
         # Store motion data
         self.motion_root_pos = data["root_trans_offset"]  # (num_frames, 3)
-        self.motion_root_rot = data["root_rot"]  # (num_frames, 4) - quaternion (w, x, y, z)
+        # Motion file stores quaternion in XYZW format, convert to WXYZ for internal use
+        motion_rot_xyzw = data["root_rot"]  # (num_frames, 4) - quaternion (x, y, z, w)
+        self.motion_root_rot = motion_rot_xyzw[:, [3, 0, 1, 2]]  # Convert XYZW to WXYZ
         self.motion_dof_pos = data["dof"]  # (num_frames, num_dofs)
         
         # Compute velocities from position differences
@@ -184,7 +216,7 @@ class Controller:
         # Compute angular velocities (simplified - from quaternion differences)
         self.motion_root_ang_vel = np.zeros((self.motion_num_frames, 3), dtype=np.float32)
         
-        print(f"Loaded motion data: {self.motion_num_frames} frames at {self.motion_fps} fps")
+        print(f"Loaded motion data with MotionLib: {self.motion_num_frames} frames at {self.motion_fps} fps")
     
     def _log_observation(self, actor_obs, future_motion_targets, prop_history, raw_obs):
         """Log observation data for debugging."""
@@ -283,7 +315,7 @@ class Controller:
         return np.stack([roll, pitch], axis=-1)
     
     def _get_future_motion_targets(self):
-        """Compute future motion targets for student model."""
+        """Compute future motion targets for student model using motion library."""
         # Sample future timesteps: linspace from 1 to future_max_steps with future_num_steps points
         tar_steps = np.linspace(1, self.future_max_steps, self.future_num_steps, dtype=np.int32)
         
@@ -295,28 +327,34 @@ class Controller:
         
         for step in tar_steps:
             time_offset = step * self.config.control_dt
-            frame_idx = self._get_motion_frame_idx(time_offset)
+            motion_time = torch.tensor(self.counter * self.config.control_dt + time_offset, dtype=torch.float32)
+            motion_ids = torch.zeros((1,), dtype=torch.int32)
+            motion_res = self.motion_lib.get_motion_state(motion_ids, motion_time)
+            
+            # Extract data from motion library
+            root_pos = motion_res["root_pos"][0].numpy()
+            root_rot_xyzw = motion_res["root_rot"][0].numpy()  # XYZW format
+            root_vel_world = motion_res["root_vel"][0].numpy()
+            root_ang_vel_world = motion_res["root_ang_vel"][0].numpy()
+            dof_pos = motion_res["dof_pos"][0].numpy()
             
             # Root height
-            root_height = self.motion_root_pos[frame_idx, 2:3]
-            future_root_height.append(root_height)
+            future_root_height.append(root_pos[2:3])
             
-            # Roll pitch from quaternion
-            roll_pitch = self._quat_to_roll_pitch(self.motion_root_rot[frame_idx])
+            # Roll pitch from quaternion (convert XYZW to WXYZ)
+            root_rot_wxyz = root_rot_xyzw[[3, 0, 1, 2]]
+            roll_pitch = self._quat_to_roll_pitch(root_rot_wxyz)
             future_roll_pitch.append(roll_pitch)
             
             # Root linear velocity (in local frame)
-            root_vel = self.motion_root_vel[frame_idx]
-            root_rot = self.motion_root_rot[frame_idx]
-            local_vel = quat_rotate_inverse(root_rot[np.newaxis], root_vel[np.newaxis])[0]
+            local_vel = quat_rotate_inverse(root_rot_wxyz[np.newaxis], root_vel_world[np.newaxis])[0]
             future_base_lin_vel.append(local_vel)
             
-            # Yaw angular velocity
-            yaw_vel = self.motion_root_ang_vel[frame_idx, 2:3]
-            future_base_yaw_vel.append(yaw_vel)
+            # Yaw angular velocity (in local frame)
+            local_ang_vel = quat_rotate_inverse(root_rot_wxyz[np.newaxis], root_ang_vel_world[np.newaxis])[0]
+            future_base_yaw_vel.append(local_ang_vel[2:3])
             
             # DOF positions
-            dof_pos = self.motion_dof_pos[frame_idx]
             future_dof_pos.append(dof_pos)
         
         # Concatenate all: (future_num_steps, dim) -> flatten to (1, total_dim)
@@ -543,33 +581,63 @@ class Controller:
             # 7. next_step_ref_motion: 57
             # 8. history: 740 (same as prop_history)
             
-            # Get next step reference motion from motion data
-            next_frame_idx = self._get_motion_frame_idx(self.config.control_dt)
-            next_root_height = self.motion_root_pos[next_frame_idx, 2:3]
-            next_roll_pitch = self._quat_to_roll_pitch(self.motion_root_rot[next_frame_idx])
-            next_root_vel = self.motion_root_vel[next_frame_idx]
-            next_root_rot = self.motion_root_rot[next_frame_idx]
-            next_local_vel = quat_rotate_inverse(next_root_rot[np.newaxis], next_root_vel[np.newaxis])[0]
-            next_yaw_vel = self.motion_root_ang_vel[next_frame_idx, 2:3]
-            next_dof_pos = self.motion_dof_pos[next_frame_idx]
+            # Get next step reference motion from motion library
+            motion_time = torch.tensor((self.counter + 1) * self.config.control_dt, dtype=torch.float32)
+            motion_ids = torch.zeros((1,), dtype=torch.int32)
+            motion_res = self.motion_lib.get_motion_state(motion_ids, motion_time)
             
-            # For key body positions, use zeros as we don't have this data readily available
-            next_key_body_pos = np.zeros(27, dtype=np.float32)  # 3 * 9 key bodies
+            # Extract data from motion library result
+            next_root_pos = motion_res["root_pos"][0].numpy()  # (3,)
+            next_root_rot_xyzw = motion_res["root_rot"][0].numpy()  # (4,) XYZW format
+            next_root_vel_world = motion_res["root_vel"][0].numpy()  # (3,)
+            next_root_ang_vel_world = motion_res["root_ang_vel"][0].numpy()  # (3,)
+            next_dof_pos = motion_res["dof_pos"][0].numpy()  # (23,)
+            ref_body_pos = motion_res["rg_pos_t"][0].numpy()  # (num_bodies, 3)
+            ref_body_rot = motion_res["rg_rot_t"][0].numpy()  # (num_bodies, 4) XYZW
+            
+            # Root height
+            next_root_height = next_root_pos[2:3]
+            
+            # Convert quaternion XYZW to WXYZ for roll_pitch calculation
+            next_root_rot_wxyz = next_root_rot_xyzw[[3, 0, 1, 2]]
+            next_roll_pitch = self._quat_to_roll_pitch(next_root_rot_wxyz)
+            
+            # Root velocity in local frame (use WXYZ for quat_rotate_inverse)
+            next_local_vel = quat_rotate_inverse(next_root_rot_wxyz[np.newaxis], next_root_vel_world[np.newaxis])[0]
+            
+            # Root angular velocity yaw (local frame)
+            next_local_ang_vel = quat_rotate_inverse(next_root_rot_wxyz[np.newaxis], next_root_ang_vel_world[np.newaxis])[0]
+            next_yaw_vel = next_local_ang_vel[2:3]
+            
+            # Compute local key body positions relative to anchor (root)
+            anchor_pos = ref_body_pos[self.anchor_index]  # (3,)
+            anchor_rot_xyzw = ref_body_rot[self.anchor_index]  # (4,) XYZW
+            anchor_rot_wxyz = anchor_rot_xyzw[[3, 0, 1, 2]]
+            
+            # Get key body positions and transform to local frame
+            key_body_pos_world = ref_body_pos[self.key_body_id]  # (9, 3)
+            key_body_pos_relative = key_body_pos_world - anchor_pos  # (9, 3)
+            
+            # Rotate to local frame using anchor inverse rotation
+            next_key_body_pos = quat_rotate_inverse(
+                np.tile(anchor_rot_wxyz, (len(self.key_body_id), 1)),
+                key_body_pos_relative
+            ).flatten().astype(np.float32)  # (27,)
             
             next_step_ref_motion = np.concatenate([
-                next_root_height,      # 1
-                next_roll_pitch,       # 2
-                next_local_vel,        # 3
-                next_yaw_vel,          # 1
-                next_dof_pos,          # 23
-                next_key_body_pos,     # 27
+                next_root_height.astype(np.float32),      # 1
+                next_roll_pitch.astype(np.float32),       # 2
+                next_local_vel.astype(np.float32),        # 3
+                next_yaw_vel.astype(np.float32),          # 1
+                next_dof_pos.astype(np.float32),          # 23
+                next_key_body_pos,                        # 27
             ], axis=0)
             
             # Compute anchor_ref_rot: 6D rotation representation (first 2 columns of rotation matrix)
             # This represents the relative rotation from current robot to reference motion
             # Use reference motion orientation relative to current robot orientation
             current_quat_xyzw = np.array([quat[1], quat[2], quat[3], quat[0]], dtype=np.float32)  # Convert WXYZ to XYZW
-            ref_quat_xyzw = self.motion_root_rot[next_frame_idx][[1,2,3,0]]  # Convert WXYZ to XYZW
+            ref_quat_xyzw = next_root_rot_xyzw  # Already in XYZW format from motion library
             
             # Compute relative rotation: current_inv * ref
             # quat_inv for XYZW: [-x, -y, -z, w]
