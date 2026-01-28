@@ -3,6 +3,8 @@ import numpy as np
 import time
 import torch
 import joblib
+import os
+from datetime import datetime
 
 from unitree_sdk2py.core.channel import ChannelPublisher, ChannelFactoryInitialize
 from unitree_sdk2py.core.channel import ChannelSubscriber, ChannelFactoryInitialize
@@ -146,6 +148,19 @@ class Controller:
                 self.student_history["dof_pos"].append(np.zeros(self.config.num_actions, dtype=np.float32))
                 self.student_history["dof_vel"].append(np.zeros(self.config.num_actions, dtype=np.float32))
                 self.student_history["actions"].append(np.zeros(self.config.num_actions, dtype=np.float32))
+        
+        # Observation logging setup
+        self.obs_logging_enabled = getattr(config, 'obs_logging', False)
+        self.obs_log_interval = getattr(config, 'obs_log_interval', 10)  # Log every N steps
+        self.obs_log_data = []
+        if self.obs_logging_enabled:
+            self.obs_log_dir = os.path.join("logs", "obs_logs")
+            os.makedirs(self.obs_log_dir, exist_ok=True)
+            self.obs_log_file = os.path.join(
+                self.obs_log_dir, 
+                f"obs_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl"
+            )
+            print(f"Observation logging enabled. Will save to: {self.obs_log_file}")
 
     def _load_motion_data(self):
         """Load full motion data for future motion targets computation."""
@@ -171,11 +186,85 @@ class Controller:
         
         print(f"Loaded motion data: {self.motion_num_frames} frames at {self.motion_fps} fps")
     
+    def _log_observation(self, actor_obs, future_motion_targets, prop_history, raw_obs):
+        """Log observation data for debugging."""
+        log_entry = {
+            "counter": self.counter,
+            "time": time.time(),
+            "actor_obs": actor_obs.copy(),
+            "future_motion_targets": future_motion_targets.copy(),
+            "prop_history": prop_history.copy(),
+            "action_output": self.action.copy(),
+            "raw_obs": {k: v.copy() if hasattr(v, 'copy') else v for k, v in raw_obs.items()},
+        }
+        self.obs_log_data.append(log_entry)
+        
+        # Print summary every log interval
+        if self.counter % (self.obs_log_interval * 10) == 0:
+            print(f"[Step {self.counter}] Obs stats - "
+                  f"actor_obs: mean={actor_obs.mean():.4f}, std={actor_obs.std():.4f}, "
+                  f"action: mean={self.action.mean():.4f}, std={self.action.std():.4f}")
+    
+    def save_obs_log(self):
+        """Save observation log to file."""
+        if not self.obs_logging_enabled or len(self.obs_log_data) == 0:
+            print("No observation data to save.")
+            return
+        
+        # Convert to structured format
+        save_data = {
+            "config": {
+                "motion_file": self.motion_file,
+                "policy_path": self.config.policy_path,
+                "control_dt": self.config.control_dt,
+                "action_scale": self.config.action_scale,
+                "ang_vel_scale": self.config.ang_vel_scale,
+                "dof_pos_scale": self.config.dof_pos_scale,
+                "dof_vel_scale": self.config.dof_vel_scale,
+            },
+            "logs": self.obs_log_data,
+        }
+        
+        joblib.dump(save_data, self.obs_log_file)
+        print(f"Saved {len(self.obs_log_data)} observation logs to: {self.obs_log_file}")
+    
     def _get_motion_frame_idx(self, time_offset=0.0):
         """Get the motion frame index for the current time + offset."""
         current_time = (self.counter * self.config.control_dt + time_offset) % self.motion_len
         frame_idx = int(current_time / self.motion_dt)
         return min(frame_idx, self.motion_num_frames - 1)
+    
+    def _quat_mul(self, q1, q2):
+        """Multiply two quaternions (w, x, y, z format)."""
+        w1, x1, y1, z1 = q1[..., 0], q1[..., 1], q1[..., 2], q1[..., 3]
+        w2, x2, y2, z2 = q2[..., 0], q2[..., 1], q2[..., 2], q2[..., 3]
+        
+        w = w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2
+        x = w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2
+        y = w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2
+        z = w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2
+        
+        return np.stack([w, x, y, z], axis=-1)
+    
+    def _quat_conjugate(self, q):
+        """Conjugate of quaternion (w, x, y, z format)."""
+        return np.stack([q[..., 0], -q[..., 1], -q[..., 2], -q[..., 3]], axis=-1)
+    
+    def _quat_to_rotation_6d(self, quat):
+        """Convert quaternion to 6D rotation representation (first two columns of rotation matrix)."""
+        w, x, y, z = quat[..., 0], quat[..., 1], quat[..., 2], quat[..., 3]
+        
+        # First column of rotation matrix
+        r00 = 1 - 2 * (y**2 + z**2)
+        r10 = 2 * (x * y + w * z)
+        r20 = 2 * (x * z - w * y)
+        
+        # Second column of rotation matrix
+        r01 = 2 * (x * y - w * z)
+        r11 = 1 - 2 * (x**2 + z**2)
+        r21 = 2 * (y * z + w * x)
+        
+        return np.stack([r00, r10, r20, r01, r11, r21], axis=-1)
     
     def _quat_to_roll_pitch(self, quat):
         """Convert quaternion (w, x, y, z) to roll and pitch angles."""
@@ -231,31 +320,37 @@ class Controller:
             future_dof_pos.append(dof_pos)
         
         # Concatenate all: (future_num_steps, dim) -> flatten to (1, total_dim)
+        # IMPORTANT: Observations must be in SORTED (alphabetical) order!
+        # sorted order: future_motion_base_lin_vel, future_motion_base_yaw_vel, future_motion_dof_pos, future_motion_roll_pitch, future_motion_root_height
         future_motion_targets = np.concatenate([
-            np.array(future_root_height).flatten(),      # 1 * 20 = 20
-            np.array(future_roll_pitch).flatten(),       # 2 * 20 = 40
             np.array(future_base_lin_vel).flatten(),     # 3 * 20 = 60
             np.array(future_base_yaw_vel).flatten(),     # 1 * 20 = 20
             np.array(future_dof_pos).flatten(),          # 23 * 20 = 460
+            np.array(future_roll_pitch).flatten(),       # 2 * 20 = 40
+            np.array(future_root_height).flatten(),      # 1 * 20 = 20
         ], axis=0).astype(np.float32)
         
         return future_motion_targets.reshape(1, -1)
     
     def _get_prop_history(self, base_ang_vel, roll_pitch, dof_pos, dof_vel):
-        """Get proprioceptive history for student model."""
-        # Update history (newest first)
+        """Get proprioceptive history for student model.
+        History is concatenated in sorted key order: actions, base_ang_vel, dof_pos, dof_vel, roll_pitch
+        Each history item has history_length timesteps.
+        """
+        # Update history (append current to left, oldest falls off right)
         self.student_history["base_ang_vel"].appendleft(base_ang_vel.copy())
         self.student_history["roll_pitch"].appendleft(roll_pitch.copy())
         self.student_history["dof_pos"].appendleft(dof_pos.copy())
         self.student_history["dof_vel"].appendleft(dof_vel.copy())
         self.student_history["actions"].appendleft(self.action.copy())
         
-        # Concatenate history: for each type, concat all timesteps
-        # Order: base_ang_vel, roll_pitch, dof_pos, dof_vel, actions (alphabetical by key)
+        # Concatenate history in sorted key order
+        # For each key, concatenate all timesteps: [t0, t1, ..., t9]
         history_parts = []
         for key in ["actions", "base_ang_vel", "dof_pos", "dof_vel", "roll_pitch"]:
-            for i in range(self.history_length):
-                history_parts.append(self.student_history[key][i])
+            # Concatenate all timesteps for this key
+            key_history = np.concatenate([self.student_history[key][i] for i in range(self.history_length)], axis=0)
+            history_parts.append(key_history)
         
         prop_history = np.concatenate(history_parts, axis=0).astype(np.float32)
         return prop_history.reshape(1, -1)
@@ -420,7 +515,7 @@ class Controller:
         if self.is_student_model:
             # Student model: requires actor_obs, future_motion_targets, prop_history
             
-            # Compute roll_pitch for history
+            # Compute roll_pitch
             roll_pitch = np.array([
                 np.arctan2(2.0 * (quat[0] * quat[1] + quat[2] * quat[3]), 
                           1.0 - 2.0 * (quat[1]**2 + quat[2]**2)),
@@ -438,12 +533,114 @@ class Controller:
                 dof_vel=dqj_obs
             )
             
+            # Build actor_obs for student model (877 dims):
+            # 1. base_ang_vel: 3
+            # 2. dof_pos: 23
+            # 3. dof_vel: 23  
+            # 4. actions: 23
+            # 5. roll_pitch: 2
+            # 6. anchor_ref_rot: 6 (6D rotation representation)
+            # 7. next_step_ref_motion: 57
+            # 8. history: 740 (same as prop_history)
+            
+            # Get next step reference motion from motion data
+            next_frame_idx = self._get_motion_frame_idx(self.config.control_dt)
+            next_root_height = self.motion_root_pos[next_frame_idx, 2:3]
+            next_roll_pitch = self._quat_to_roll_pitch(self.motion_root_rot[next_frame_idx])
+            next_root_vel = self.motion_root_vel[next_frame_idx]
+            next_root_rot = self.motion_root_rot[next_frame_idx]
+            next_local_vel = quat_rotate_inverse(next_root_rot[np.newaxis], next_root_vel[np.newaxis])[0]
+            next_yaw_vel = self.motion_root_ang_vel[next_frame_idx, 2:3]
+            next_dof_pos = self.motion_dof_pos[next_frame_idx]
+            
+            # For key body positions, use zeros as we don't have this data readily available
+            next_key_body_pos = np.zeros(27, dtype=np.float32)  # 3 * 9 key bodies
+            
+            next_step_ref_motion = np.concatenate([
+                next_root_height,      # 1
+                next_roll_pitch,       # 2
+                next_local_vel,        # 3
+                next_yaw_vel,          # 1
+                next_dof_pos,          # 23
+                next_key_body_pos,     # 27
+            ], axis=0)
+            
+            # Compute anchor_ref_rot: 6D rotation representation (first 2 columns of rotation matrix)
+            # This represents the relative rotation from current robot to reference motion
+            # Use reference motion orientation relative to current robot orientation
+            current_quat_xyzw = np.array([quat[1], quat[2], quat[3], quat[0]], dtype=np.float32)  # Convert WXYZ to XYZW
+            ref_quat_xyzw = self.motion_root_rot[next_frame_idx][[1,2,3,0]]  # Convert WXYZ to XYZW
+            
+            # Compute relative rotation: current_inv * ref
+            # quat_inv for XYZW: [-x, -y, -z, w]
+            current_quat_inv = np.array([-current_quat_xyzw[0], -current_quat_xyzw[1], -current_quat_xyzw[2], current_quat_xyzw[3]])
+            
+            # Simple quaternion multiplication (not perfectly accurate but close enough)
+            # For now, use a simpler approximation: convert to rotation matrix
+            def quat_to_rotmat(q):
+                """Convert XYZW quaternion to 3x3 rotation matrix."""
+                x, y, z, w = q[0], q[1], q[2], q[3]
+                return np.array([
+                    [1 - 2*(y*y + z*z), 2*(x*y - w*z), 2*(x*z + w*y)],
+                    [2*(x*y + w*z), 1 - 2*(x*x + z*z), 2*(y*z - w*x)],
+                    [2*(x*z - w*y), 2*(y*z + w*x), 1 - 2*(x*x + y*y)]
+                ], dtype=np.float32)
+            
+            current_rotmat = quat_to_rotmat(current_quat_xyzw)
+            ref_rotmat = quat_to_rotmat(ref_quat_xyzw)
+            
+            # Relative rotation: current.T @ ref
+            rel_rotmat = current_rotmat.T @ ref_rotmat
+            
+            # Take first 2 columns (6D representation)
+            anchor_ref_rot_6d = rel_rotmat[:, :2].flatten()  # 6D
+            
+            # IMPORTANT: Observations must be in SORTED (alphabetical) order!
+            # sorted order: actions, anchor_ref_rot, base_ang_vel, dof_pos, dof_vel, history, next_step_ref_motion, roll_pitch
+            actor_obs = np.concatenate([
+                self.action,           # actions: 23
+                anchor_ref_rot_6d,     # anchor_ref_rot: 6
+                ang_vel.flatten(),     # base_ang_vel: 3
+                qj_obs,                # dof_pos: 23
+                dqj_obs,               # dof_vel: 23
+                prop_history.flatten(),# history: 740
+                next_step_ref_motion,  # next_step_ref_motion: 57
+                roll_pitch,            # roll_pitch: 2
+            ], axis=0).astype(np.float32).reshape(1, -1)
+            
             # Prepare inputs
             inputs = {
-                "actor_obs": self.obs_buf.numpy(),
+                "actor_obs": actor_obs,
                 "future_motion_targets": future_motion_targets,
                 "prop_history": prop_history
             }
+            
+            # Debug: print dimensions on first run
+            if self.counter == 1:
+                print(f"Debug - Input dimensions:")
+                print(f"  actor_obs: {actor_obs.shape} (expected: [1, 877])")
+                print(f"  future_motion_targets: {future_motion_targets.shape} (expected: [1, 600])")
+                print(f"  prop_history: {prop_history.shape} (expected: [1, 740])")
+            
+            # Log observations if enabled
+            if self.obs_logging_enabled and (self.counter % self.obs_log_interval == 0):
+                self._log_observation(
+                    actor_obs=actor_obs,
+                    future_motion_targets=future_motion_targets,
+                    prop_history=prop_history,
+                    raw_obs={
+                        "actions": self.action.copy(),
+                        "anchor_ref_rot": anchor_ref_rot_6d.copy(),
+                        "base_ang_vel": ang_vel.flatten().copy(),
+                        "dof_pos": qj_obs.copy(),
+                        "dof_vel": dqj_obs.copy(),
+                        "roll_pitch": roll_pitch.copy(),
+                        "next_step_ref_motion": next_step_ref_motion.copy(),
+                        "quat": np.array(quat),
+                        "gravity_orientation": gravity_orientation.copy(),
+                    }
+                )
+            
             outputs = self.policy.run(None, inputs)
         else:
             # Teacher model: only requires actor_obs
@@ -482,11 +679,17 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("net", type=str, help="network interface")
     parser.add_argument("config", type=str, help="config file name in the configs folder", default="g1.yaml")
+    parser.add_argument("--log-obs", action="store_true", help="Enable observation logging")
+    parser.add_argument("--log-interval", type=int, default=10, help="Log observation every N steps")
     args = parser.parse_args()
 
     # Load config
     config_path = f"deploy_real/configs/{args.config}"
     config = Config(config_path)
+    
+    # Override config with command line args
+    config.obs_logging = args.log_obs
+    config.obs_log_interval = args.log_interval
 
     # Initialize DDS communication
     ChannelFactoryInitialize(0, args.net)
@@ -510,6 +713,10 @@ if __name__ == "__main__":
                 break
         except KeyboardInterrupt:
             break
+    
+    # Save observation log if enabled
+    controller.save_obs_log()
+    
     # Enter the damping state
     create_damping_cmd(controller.low_cmd)
     controller.send_cmd(controller.low_cmd)

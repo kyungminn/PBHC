@@ -148,7 +148,6 @@ def main(override_config: OmegaConf):
     def load_raw_ckpt_config(path: str, override_config: CfgType):
             
         
-        
         if path.startswith('_external'):
             config_path = Path("humanoidverse/config/deploy/external.yaml")
             checkpoint = Path(f"logs/External/{path}/{path}")

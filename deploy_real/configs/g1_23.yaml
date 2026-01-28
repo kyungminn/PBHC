@@ -6,8 +6,8 @@ imu_type: "pelvis"    # "torso" or "pelvis"
 lowcmd_topic: "rt/lowcmd"
 lowstate_topic: "rt/lowstate"
 
-policy_path: "example/pretrained_horse_stance_punch/exported/model_33000.onnx"
-motion_file: "example/motion_data/Horse-stance_punch.pkl"
+policy_path: "logs/MotionTracking/phuma_student/exported/model_15000.onnx"
+motion_file: "motion_data/g1_ue_walk_23dof.pkl"
 
 leg_joint2motor_idx: [0, 1, 2, 3, 4, 5, 
                       6, 7, 8, 9, 10, 11, 
