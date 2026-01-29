@@ -8,7 +8,7 @@ lowstate_topic: "rt/lowstate"
 
 # Student model configuration
 policy_path: "logs/MotionTracking/phuma_student/exported/model_15000.onnx"
-motion_file: "motion_data/g1_ue_walk_23dof.pkl"
+motion_file: "motion_data/g1_walk_45cms_23dof.pkl"
 
 # Student model parameters
 future_max_steps: 95

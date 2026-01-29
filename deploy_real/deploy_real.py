@@ -42,6 +42,45 @@ def quat_rotate_inverse(q, v):
     return v - q_w[..., None] * t + np.cross(np.stack([q_x, q_y, q_z], axis=-1), t)
 
 
+def calc_heading_quat_xyzw(q_xyzw):
+    """Calculate heading quaternion from quaternion (XYZW format).
+    Returns only the yaw rotation component."""
+    x, y, z, w = q_xyzw[..., 0], q_xyzw[..., 1], q_xyzw[..., 2], q_xyzw[..., 3]
+    heading = np.arctan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+    half_heading = heading * 0.5
+    heading_quat = np.stack([
+        np.zeros_like(half_heading),  # x
+        np.zeros_like(half_heading),  # y
+        np.sin(half_heading),         # z
+        np.cos(half_heading)          # w
+    ], axis=-1)
+    return heading_quat.astype(np.float32)
+
+
+def quat_inverse_xyzw(q_xyzw):
+    """Inverse of quaternion in XYZW format."""
+    return np.array([-q_xyzw[0], -q_xyzw[1], -q_xyzw[2], q_xyzw[3]], dtype=np.float32)
+
+
+def quat_mul_xyzw(q1, q2):
+    """Multiply two quaternions in XYZW format."""
+    x1, y1, z1, w1 = q1[0], q1[1], q1[2], q1[3]
+    x2, y2, z2, w2 = q2[0], q2[1], q2[2], q2[3]
+    return np.array([
+        w1*x2 + x1*w2 + y1*z2 - z1*y2,
+        w1*y2 - x1*z2 + y1*w2 + z1*x2,
+        w1*z2 + x1*y2 - y1*x2 + z1*w2,
+        w1*w2 - x1*x2 - y1*y2 - z1*z2
+    ], dtype=np.float32)
+
+
+def quat_apply_xyzw(q, v):
+    """Apply quaternion rotation to vector. Quaternion in XYZW format."""
+    x, y, z, w = q[0], q[1], q[2], q[3]
+    t = 2.0 * np.cross(np.array([x, y, z]), v)
+    return v + w * t + np.cross(np.array([x, y, z]), t)
+
+
 class Controller:
     def __init__(self, config: Config) -> None:
         self.config = config
@@ -77,6 +116,12 @@ class Controller:
         self.target_dof_pos = config.default_angles.copy()
         self.obs = np.zeros(config.num_obs, dtype=np.float32)
         self.counter = 0
+        
+        # Init frame variables for ref-to-robot transformation (student model)
+        self.init_frame_set = False
+        self.robot_init_heading_quat = None  # XYZW
+        self.ref_init_heading_quat = None    # XYZW
+        self.q_rel = None  # Relative quaternion for transformation
 
         if config.msg_type == "hg":
             # g1 and h1_2 use the hg msg type
@@ -217,6 +262,31 @@ class Controller:
         self.motion_root_ang_vel = np.zeros((self.motion_num_frames, 3), dtype=np.float32)
         
         print(f"Loaded motion data with MotionLib: {self.motion_num_frames} frames at {self.motion_fps} fps")
+    
+    def _setup_init_frame(self, robot_quat_xyzw, motion_res):
+        """Setup initial frames for ref-to-robot transformation.
+        Called once on the first frame to align motion with robot's initial heading.
+        """
+        # Robot initial heading (only yaw component)
+        self.robot_init_heading_quat = calc_heading_quat_xyzw(robot_quat_xyzw)
+        
+        # Reference motion initial heading
+        ref_init_rot_xyzw = motion_res["root_rot"][0].numpy()  # First frame
+        self.ref_init_heading_quat = calc_heading_quat_xyzw(ref_init_rot_xyzw)
+        
+        # Compute relative quaternion: q_rel = robot_init * ref_init_inv
+        ref_init_inv = quat_inverse_xyzw(self.ref_init_heading_quat)
+        self.q_rel = quat_mul_xyzw(self.robot_init_heading_quat, ref_init_inv)
+        
+        self.init_frame_set = True
+        print(f"Init frame set: robot_heading={self.robot_init_heading_quat}, ref_heading={self.ref_init_heading_quat}")
+    
+    def _ref_to_robot_frame_quat(self, ref_quat_xyzw):
+        """Transform reference quaternion to robot frame.
+        Applies the initial heading alignment."""
+        if not self.init_frame_set:
+            return ref_quat_xyzw
+        return quat_mul_xyzw(self.q_rel, ref_quat_xyzw)
     
     def _log_observation(self, actor_obs, future_motion_targets, prop_history, raw_obs):
         """Log observation data for debugging."""
@@ -586,6 +656,12 @@ class Controller:
             motion_ids = torch.zeros((1,), dtype=torch.int32)
             motion_res = self.motion_lib.get_motion_state(motion_ids, motion_time)
             
+            # Setup init frame on first run (for ref-to-robot transformation)
+            if not self.init_frame_set:
+                # Convert current robot quat from WXYZ to XYZW
+                robot_quat_xyzw = np.array([quat[1], quat[2], quat[3], quat[0]], dtype=np.float32)
+                self._setup_init_frame(robot_quat_xyzw, motion_res)
+            
             # Extract data from motion library result
             next_root_pos = motion_res["root_pos"][0].numpy()  # (3,)
             next_root_rot_xyzw = motion_res["root_rot"][0].numpy()  # (4,) XYZW format
@@ -635,9 +711,9 @@ class Controller:
             
             # Compute anchor_ref_rot: 6D rotation representation (first 2 columns of rotation matrix)
             # This represents the relative rotation from current robot to reference motion
-            # Use reference motion orientation relative to current robot orientation
+            # IMPORTANT: Transform ref motion to robot frame using initial heading alignment
             current_quat_xyzw = np.array([quat[1], quat[2], quat[3], quat[0]], dtype=np.float32)  # Convert WXYZ to XYZW
-            ref_quat_xyzw = next_root_rot_xyzw  # Already in XYZW format from motion library
+            ref_quat_xyzw = self._ref_to_robot_frame_quat(next_root_rot_xyzw)  # Transform to robot frame
             
             # Compute relative rotation: current_inv * ref
             # quat_inv for XYZW: [-x, -y, -z, w]
