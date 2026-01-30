@@ -86,6 +86,10 @@ class Controller:
         self.config = config
         self.frame_stack = self.config.frame_stack
         
+        # Debug logging settings
+        self.debug_log_enabled = getattr(config, 'debug_log', False)
+        self.debug_log_interval = getattr(config, 'debug_log_interval', 50)
+        
         self.motion_file = self.config.motion_file
         self.motion_len = get_motion_len(self.motion_file)
         
@@ -198,7 +202,7 @@ class Controller:
                 self.student_history["dof_vel"].append(np.zeros(self.config.num_actions, dtype=np.float32))
                 self.student_history["actions"].append(np.zeros(self.config.num_actions, dtype=np.float32))
         
-        # Observation logging setup
+        # Observation logging setup (pkl file)
         self.obs_logging_enabled = getattr(config, 'obs_logging', False)
         self.obs_log_interval = getattr(config, 'obs_log_interval', 10)  # Log every N steps
         self.obs_log_data = []
@@ -210,6 +214,21 @@ class Controller:
                 f"obs_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl"
             )
             print(f"Observation logging enabled. Will save to: {self.obs_log_file}")
+        
+        # Debug text logging setup (txt file)
+        self.debug_log_file = None
+        if self.debug_log_enabled:
+            log_dir = os.path.join("logs", "debug_logs")
+            os.makedirs(log_dir, exist_ok=True)
+            self.debug_log_filename = os.path.join(log_dir, f"real_world_debug_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
+            self.debug_log_file = open(self.debug_log_filename, 'w')
+            print(f"Debug logging enabled. Will save to: {self.debug_log_filename}")
+    
+    def _debug_log(self, msg):
+        """Write debug message to log file."""
+        if self.debug_log_file:
+            self.debug_log_file.write(msg + '\n')
+            self.debug_log_file.flush()  # Ensure immediate write
 
     def _load_motion_data(self):
         """Load full motion data for future motion targets computation using MotionLib."""
@@ -279,7 +298,9 @@ class Controller:
         self.q_rel = quat_mul_xyzw(self.robot_init_heading_quat, ref_init_inv)
         
         self.init_frame_set = True
-        print(f"Init frame set: robot_heading={self.robot_init_heading_quat}, ref_heading={self.ref_init_heading_quat}")
+        self._debug_log(f"[INIT_FRAME] robot_heading={self.robot_init_heading_quat}")
+        self._debug_log(f"[INIT_FRAME] ref_heading={self.ref_init_heading_quat}")
+        self._debug_log(f"[INIT_FRAME] q_rel={self.q_rel}")
     
     def _ref_to_robot_frame_quat(self, ref_quat_xyzw):
         """Transform reference quaternion to robot frame.
@@ -329,6 +350,12 @@ class Controller:
         
         joblib.dump(save_data, self.obs_log_file)
         print(f"Saved {len(self.obs_log_data)} observation logs to: {self.obs_log_file}")
+    
+    def close_debug_log(self):
+        """Close debug log file."""
+        if self.debug_log_file:
+            self.debug_log_file.close()
+            print(f"Debug log saved to: {self.debug_log_filename}")
     
     def _get_motion_frame_idx(self, time_offset=0.0):
         """Get the motion frame index for the current time + offset."""
@@ -761,10 +788,28 @@ class Controller:
             
             # Debug: print dimensions on first run
             if self.counter == 1:
-                print(f"Debug - Input dimensions:")
+                print(f"[DEBUG] Input dimensions:")
                 print(f"  actor_obs: {actor_obs.shape} (expected: [1, 877])")
                 print(f"  future_motion_targets: {future_motion_targets.shape} (expected: [1, 600])")
                 print(f"  prop_history: {prop_history.shape} (expected: [1, 740])")
+            
+            # Detailed debug logging to file
+            if self.debug_log_enabled and (self.counter % self.debug_log_interval == 0 or self.counter <= 3):
+                self._debug_log(f"\n{'='*60}")
+                self._debug_log(f"[STEP {self.counter}] t={self.counter * self.config.control_dt:.3f}s")
+                self._debug_log(f"{'='*60}")
+                self._debug_log(f"[IMU] quat(WXYZ)=[{quat[0]:.4f}, {quat[1]:.4f}, {quat[2]:.4f}, {quat[3]:.4f}]")
+                self._debug_log(f"[IMU] ang_vel=[{ang_vel.flatten()[0]:.4f}, {ang_vel.flatten()[1]:.4f}, {ang_vel.flatten()[2]:.4f}]")
+                self._debug_log(f"[IMU] roll_pitch=[{roll_pitch[0]:.4f}, {roll_pitch[1]:.4f}] (deg: [{np.degrees(roll_pitch[0]):.2f}, {np.degrees(roll_pitch[1]):.2f}])")
+                self._debug_log(f"[JOINT] qj_obs (scaled) range=[{qj_obs.min():.4f}, {qj_obs.max():.4f}]")
+                self._debug_log(f"[JOINT] dqj_obs (scaled) range=[{dqj_obs.min():.4f}, {dqj_obs.max():.4f}]")
+                self._debug_log(f"[REF_MOTION] next_root_height={next_root_height[0]:.4f}")
+                self._debug_log(f"[REF_MOTION] next_roll_pitch=[{next_roll_pitch[0]:.4f}, {next_roll_pitch[1]:.4f}]")
+                self._debug_log(f"[REF_MOTION] next_local_vel=[{next_local_vel[0]:.4f}, {next_local_vel[1]:.4f}, {next_local_vel[2]:.4f}]")
+                self._debug_log(f"[REF_MOTION] next_key_body_pos range=[{next_key_body_pos.min():.4f}, {next_key_body_pos.max():.4f}]")
+                self._debug_log(f"[ANCHOR_ROT] anchor_ref_rot_6d=[{anchor_ref_rot_6d[0]:.4f}, {anchor_ref_rot_6d[1]:.4f}, {anchor_ref_rot_6d[2]:.4f}, {anchor_ref_rot_6d[3]:.4f}, {anchor_ref_rot_6d[4]:.4f}, {anchor_ref_rot_6d[5]:.4f}]")
+                self._debug_log(f"[FUTURE] future_motion_targets range=[{future_motion_targets.min():.4f}, {future_motion_targets.max():.4f}]")
+                self._debug_log(f"[HISTORY] prop_history range=[{prop_history.min():.4f}, {prop_history.max():.4f}]")
             
             # Log observations if enabled
             if self.obs_logging_enabled and (self.counter % self.obs_log_interval == 0):
@@ -793,6 +838,15 @@ class Controller:
         
         self.action = outputs[0].squeeze()
         target_dof_pos = self.default_angles + self.action * self.config.action_scale
+        
+        # Debug logging for action output
+        if self.is_student_model and self.debug_log_enabled and (self.counter % self.debug_log_interval == 0 or self.counter <= 3):
+            self._debug_log(f"[ACTION] raw action range=[{self.action.min():.4f}, {self.action.max():.4f}]")
+            self._debug_log(f"[ACTION] action_scale={self.config.action_scale}")
+            self._debug_log(f"[ACTION] target_dof_pos range=[{target_dof_pos.min():.4f}, {target_dof_pos.max():.4f}]")
+            self._debug_log(f"[ACTION] default_angles range=[{self.default_angles.min():.4f}, {self.default_angles.max():.4f}]")
+            self._debug_log(f"[ACTION] First 6 joints: target={target_dof_pos[:6].round(4)}, default={self.default_angles[:6].round(4)}")
+            self._debug_log(f"{'='*60}\n")
 
         # Build low cmd
         for i in range(len(self.config.leg_joint2motor_idx)):
@@ -823,8 +877,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("net", type=str, help="network interface")
     parser.add_argument("config", type=str, help="config file name in the configs folder", default="g1.yaml")
-    parser.add_argument("--log-obs", action="store_true", help="Enable observation logging")
-    parser.add_argument("--log-interval", type=int, default=10, help="Log observation every N steps")
+    parser.add_argument("--log-obs", action="store_true", help="Enable observation logging to pkl file")
+    parser.add_argument("--log-interval", type=int, default=10, help="Log observation every N steps (for --log-obs)")
+    parser.add_argument("--log", action="store_true", help="Enable debug logging to txt file")
+    parser.add_argument("--log-debug-interval", type=int, default=1, help="Log debug info every N steps (for --log)")
     args = parser.parse_args()
 
     # Load config
@@ -834,6 +890,8 @@ if __name__ == "__main__":
     # Override config with command line args
     config.obs_logging = args.log_obs
     config.obs_log_interval = args.log_interval
+    config.debug_log = args.log
+    config.debug_log_interval = args.log_debug_interval
 
     # Initialize DDS communication
     ChannelFactoryInitialize(0, args.net)
@@ -860,6 +918,9 @@ if __name__ == "__main__":
     
     # Save observation log if enabled
     controller.save_obs_log()
+    
+    # Close debug log file
+    controller.close_debug_log()
     
     # Enter the damping state
     create_damping_cmd(controller.low_cmd)
