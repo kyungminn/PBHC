@@ -129,6 +129,10 @@ class Controller:
         self.obs = np.zeros(config.num_obs, dtype=np.float32)
         self.counter = 0
         
+        # Action smoothing (EMA) to prevent sudden movements from observation noise
+        self.prev_action = np.zeros(config.num_actions, dtype=np.float32)
+        self.action_ema_alpha = 0.5  # 0=all previous, 1=all current (0.5 = balanced)
+        
         # Init frame variables for yaw offset alignment (student model - Method 2)
         self.init_frame_set = False
         self.robot_yaw_offset = None  # Robot's initial heading quaternion (XYZW)
@@ -250,6 +254,7 @@ class Controller:
         self.anchor_index = 0  # root
         
         # Load motion library for accurate body position computation
+        # IMPORTANT: Use extend_config that matches sim-to-sim training!
         motion_lib_cfg = DictConfig({
             'motion_file': self.motion_file,
             'asset': {
@@ -262,7 +267,7 @@ class Controller:
                 {'joint_name': 'right_hand_link', 'parent_name': 'right_elbow_link',
                  'pos': [0.25, 0.0, 0.0], 'rot': [1.0, 0.0, 0.0, 0.0]},
                 {'joint_name': 'head_link', 'parent_name': 'torso_link',
-                 'pos': [0.0, 0.0, 0.35], 'rot': [1.0, 0.0, 0.0, 0.0]},
+                 'pos': [0.0, 0.0, 0.42], 'rot': [1.0, 0.0, 0.0, 0.0]},  # CRITICAL: 0.42 (same as sim), not 0.35!
             ],
         })
         
@@ -763,7 +768,9 @@ class Controller:
             # 8. history: 740 (same as prop_history)
             
             # Get next step reference motion from motion library
-            motion_time = torch.tensor((self.counter + 1) * self.config.control_dt, dtype=torch.float32)
+            # counter starts at 1, so use counter * dt to match sim (where timer starts at 0 and uses (timer+1)*dt)
+            # counter=1 -> motion_time=0.02, counter=2 -> motion_time=0.04, etc.
+            motion_time = torch.tensor(self.counter * self.config.control_dt, dtype=torch.float32)
             motion_ids = torch.zeros((1,), dtype=torch.int32)
             motion_res = self.motion_lib.get_motion_state(motion_ids, motion_time)
             
@@ -825,13 +832,24 @@ class Controller:
             # Compute anchor_ref_rot: 6D rotation representation (first 2 columns of rotation matrix)
             # This follows the same approach as sim-to-sim (urcirobot.py):
             # anchor_ref_rot = matrix_from_quat(quat_inverse(robot_quat) * ref_to_robot_frame(ref_quat))
-            current_quat_xyzw = np.array([quat[1], quat[2], quat[3], quat[0]], dtype=np.float32)  # Convert WXYZ to XYZW
+            
+            # CRITICAL: Use offset-compensated quaternion for anchor_ref_rot calculation
+            # This ensures sim (perfectly upright robot) and real (slightly tilted robot) produce same anchor_ref_rot
+            # Method: Apply roll/pitch offset compensation to quaternion
+            if self.init_roll_pitch_offset is not None:
+                # Construct a "zero roll/pitch" quaternion from current yaw
+                current_quat_xyzw = np.array([quat[1], quat[2], quat[3], quat[0]], dtype=np.float32)
+                current_yaw = 2 * np.arctan2(current_quat_xyzw[2], current_quat_xyzw[3])
+                # Zero roll/pitch quaternion: only yaw rotation
+                current_quat_compensated = np.array([0, 0, np.sin(current_yaw/2), np.cos(current_yaw/2)], dtype=np.float32)
+            else:
+                current_quat_compensated = np.array([quat[1], quat[2], quat[3], quat[0]], dtype=np.float32)
             
             # Transform ref motion quaternion to robot frame
             ref_quat_in_robot_frame = self._ref_to_robot_frame(next_root_rot_xyzw)
             
             # Compute relative rotation: robot_quat.inverse() * ref_quat_in_robot_frame
-            robot_quat_inv = quat_inverse_xyzw(current_quat_xyzw)
+            robot_quat_inv = quat_inverse_xyzw(current_quat_compensated)
             rel_quat = quat_mul_xyzw(robot_quat_inv, ref_quat_in_robot_frame)
             
             def quat_to_rotmat(q):
@@ -940,14 +958,6 @@ class Controller:
             outputs = self.policy.run(None, {input_name: self.obs_buf.numpy()})
         
         self.action = outputs[0].squeeze()
-        
-        # Clip action to prevent instability from policy sensitivity to small IMU/orientation differences
-        # Student model trained in sim shows actions typically in [-0.3, 0.3] range
-        # Real-world IMU differences (~1-2° in roll/pitch) can cause 10x larger actions, leading to cascading instability
-        action_clip_limit = 0.6  # Conservative limit (sim max is ~0.2-0.3 typically)
-        if np.abs(self.action).max() > action_clip_limit:
-            print(f"[WARNING] Action clipped from [{self.action.min():.3f}, {self.action.max():.3f}] to [{-action_clip_limit:.3f}, {action_clip_limit:.3f}]")
-        self.action = np.clip(self.action, -action_clip_limit, action_clip_limit)
         
         # Log observations AFTER policy execution (so action matches the obs)
         if self.is_student_model and self.obs_logging_enabled and (self.counter % self.obs_log_interval == 0):
