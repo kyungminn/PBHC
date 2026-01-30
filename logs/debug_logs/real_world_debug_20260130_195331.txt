@@ -1,0 +1,280 @@
+[INIT_FRAME] robot_heading=[0.        0.        0.551003  0.8345033]
+[INIT_FRAME] ref_heading=[ 0.          0.         -0.68124354  0.73205686]
+[INIT_FRAME] q_rel=[0.         0.         0.97186553 0.23553663]
+[INIT_FRAME] yaw_diff=152.8 degrees (motion aligned to robot)
+
+============================================================
+[STEP 1] t=0.020s
+============================================================
+[IMU] quat(WXYZ)=[0.8345, 0.0063, -0.0022, 0.5510]
+[IMU] ang_vel=[0.0004, 0.0000, -0.0004]
+[IMU] roll_pitch=[0.0082, -0.0105] (deg: [0.47, -0.60])
+[JOINT] qj_obs (scaled) range=[-0.0601, 0.0267]
+[JOINT] dqj_obs (scaled) range=[-0.0008, 0.0007]
+[REF_MOTION] next_root_height=0.7873
+[REF_MOTION] next_roll_pitch=[0.0102, -0.0235]
+[REF_MOTION] next_local_vel=[0.0190, -0.0014, -0.0004]
+[REF_MOTION] next_key_body_pos range=[-0.7553, 0.3936]
+[ANCHOR_ROT] anchor_ref_rot_6d=[-0.8885, -0.4574, 0.4579, -0.8890, 0.0291, 0.0223]
+[FUTURE] future_motion_targets range=[-0.5024, 1.2346]
+[HISTORY] prop_history range=[-0.0601, 0.0267]
+[ACTION] raw action range=[-1.0544, 0.9866]
+[ACTION] action_scale=0.25
+[ACTION] target_dof_pos range=[-0.4456, 0.9576]
+[ACTION] default_angles range=[-0.2000, 0.9000]
+[ACTION] First 6 joints: target=[-0.3636 -0.0604  0.0009  0.3401 -0.1711 -0.0093], default=[-0.1  0.   0.   0.3 -0.2  0. ]
+============================================================
+
+
+============================================================
+[STEP 2] t=0.040s
+============================================================
+[IMU] quat(WXYZ)=[0.8315, 0.0075, -0.0044, 0.5554]
+[IMU] ang_vel=[-0.0628, -0.4097, 0.4848]
+[IMU] roll_pitch=[0.0077, -0.0157] (deg: [0.44, -0.90])
+[JOINT] qj_obs (scaled) range=[-0.0627, 0.0866]
+[JOINT] dqj_obs (scaled) range=[-0.1542, 0.2296]
+[REF_MOTION] next_root_height=0.7873
+[REF_MOTION] next_roll_pitch=[0.0102, -0.0235]
+[REF_MOTION] next_local_vel=[0.0343, -0.0025, -0.0008]
+[REF_MOTION] next_key_body_pos range=[-0.7553, 0.3936]
+[ANCHOR_ROT] anchor_ref_rot_6d=[-0.8834, -0.4668, 0.4674, -0.8841, 0.0337, 0.0243]
+[FUTURE] future_motion_targets range=[-0.5037, 1.2338]
+[HISTORY] prop_history range=[-1.0544, 0.9866]
+[ACTION] raw action range=[-1.3807, 1.2131]
+[ACTION] action_scale=0.25
+[ACTION] target_dof_pos range=[-0.4452, 0.9769]
+[ACTION] default_angles range=[-0.2000, 0.9000]
+[ACTION] First 6 joints: target=[-0.4452 -0.2104  0.0036  0.3682 -0.1045 -0.0328], default=[-0.1  0.   0.   0.3 -0.2  0. ]
+============================================================
+
+
+============================================================
+[STEP 3] t=0.060s
+============================================================
+[IMU] quat(WXYZ)=[0.7648, 0.0170, -0.0132, 0.6439]
+[IMU] ang_vel=[0.0881, 0.0733, 0.6885]
+[IMU] roll_pitch=[0.0089, -0.0421] (deg: [0.51, -2.41])
+[JOINT] qj_obs (scaled) range=[-0.1923, 0.2806]
+[JOINT] dqj_obs (scaled) range=[-0.1221, 0.1720]
+[REF_MOTION] next_root_height=0.7873
+[REF_MOTION] next_roll_pitch=[0.0102, -0.0235]
+[REF_MOTION] next_local_vel=[0.0600, -0.0043, -0.0013]
+[REF_MOTION] next_key_body_pos range=[-0.7553, 0.3936]
+[ANCHOR_ROT] anchor_ref_rot_6d=[-0.7579, -0.6490, 0.6505, -0.7595, 0.0497, 0.0444]
+[FUTURE] future_motion_targets range=[-0.4925, 1.2354]
+[HISTORY] prop_history range=[-1.3807, 1.2131]
+[ACTION] raw action range=[-1.7798, 1.2730]
+[ACTION] action_scale=0.25
+[ACTION] target_dof_pos range=[-0.4102, 0.9186]
+[ACTION] default_angles range=[-0.2000, 0.9000]
+[ACTION] First 6 joints: target=[-0.4102 -0.2773 -0.0393  0.3316 -0.1351 -0.0309], default=[-0.1  0.   0.   0.3 -0.2  0. ]
+============================================================
+
+
+============================================================
+[STEP 4] t=0.080s
+============================================================
+[IMU] quat(WXYZ)=[0.7317, 0.0207, 0.0025, 0.6813]
+[IMU] ang_vel=[0.0349, 0.1998, 0.0812]
+[IMU] roll_pitch=[0.0337, -0.0246] (deg: [1.93, -1.41])
+[JOINT] qj_obs (scaled) range=[-0.2509, 0.3426]
+[JOINT] dqj_obs (scaled) range=[-0.2645, 0.0664]
+[REF_MOTION] next_root_height=0.7873
+[REF_MOTION] next_roll_pitch=[0.0102, -0.0235]
+[REF_MOTION] next_local_vel=[0.0909, -0.0066, -0.0020]
+[REF_MOTION] next_key_body_pos range=[-0.7553, 0.3936]
+[ANCHOR_ROT] anchor_ref_rot_6d=[-0.6904, -0.7218, 0.7232, -0.6902, 0.0161, 0.0513]
+[FUTURE] future_motion_targets range=[-0.4716, 1.2359]
+[HISTORY] prop_history range=[-1.7798, 1.2730]
+[ACTION] raw action range=[-1.4891, 2.0832]
+[ACTION] action_scale=0.25
+[ACTION] target_dof_pos range=[-0.5723, 0.8639]
+[ACTION] default_angles range=[-0.2000, 0.9000]
+[ACTION] First 6 joints: target=[-0.3969 -0.1966 -0.0742  0.2976 -0.2846 -0.0486], default=[-0.1  0.   0.   0.3 -0.2  0. ]
+============================================================
+
+
+============================================================
+[STEP 5] t=0.100s
+============================================================
+[IMU] quat(WXYZ)=[0.7171, 0.0134, -0.0067, 0.6968]
+[IMU] ang_vel=[-0.1806, -0.4555, 0.2893]
+[IMU] roll_pitch=[0.0099, -0.0282] (deg: [0.57, -1.62])
+[JOINT] qj_obs (scaled) range=[-0.3900, 0.2886]
+[JOINT] dqj_obs (scaled) range=[-0.1570, 0.1149]
+[REF_MOTION] next_root_height=0.7873
+[REF_MOTION] next_roll_pitch=[0.0102, -0.0235]
+[REF_MOTION] next_local_vel=[0.1404, -0.0102, -0.0031]
+[REF_MOTION] next_key_body_pos range=[-0.7553, 0.3936]
+[ANCHOR_ROT] anchor_ref_rot_6d=[-0.6587, -0.7507, 0.7516, -0.6596, 0.0346, 0.0380]
+[FUTURE] future_motion_targets range=[-0.4947, 1.2360]
+[HISTORY] prop_history range=[-1.7798, 2.0832]
+[ACTION] raw action range=[-1.4250, 2.1966]
+[ACTION] action_scale=0.25
+[ACTION] target_dof_pos range=[-0.5401, 0.9939]
+[ACTION] default_angles range=[-0.2000, 0.9000]
+[ACTION] First 6 joints: target=[-0.325  -0.3563 -0.1366  0.3002 -0.4273 -0.1291], default=[-0.1  0.   0.   0.3 -0.2  0. ]
+============================================================
+
+
+============================================================
+[STEP 6] t=0.120s
+============================================================
+[IMU] quat(WXYZ)=[0.6503, 0.0245, -0.0351, 0.7585]
+[IMU] ang_vel=[0.0942, -0.1174, 0.6706]
+[IMU] roll_pitch=[-0.0214, -0.0829] (deg: [-1.23, -4.75])
+[JOINT] qj_obs (scaled) range=[-0.3760, 0.4291]
+[JOINT] dqj_obs (scaled) range=[-0.1172, 0.3313]
+[REF_MOTION] next_root_height=0.7873
+[REF_MOTION] next_roll_pitch=[0.0102, -0.0235]
+[REF_MOTION] next_local_vel=[0.1942, -0.0140, -0.0043]
+[REF_MOTION] next_key_body_pos range=[-0.7553, 0.3936]
+[ANCHOR_ROT] anchor_ref_rot_6d=[-0.5081, -0.8551, 0.8572, -0.5137, 0.0841, 0.0704]
+[FUTURE] future_motion_targets range=[-0.5024, 1.2346]
+[HISTORY] prop_history range=[-1.7798, 2.1966]
+[ACTION] raw action range=[-2.4346, 1.3637]
+[ACTION] action_scale=0.25
+[ACTION] target_dof_pos range=[-0.3225, 1.0416]
+[ACTION] default_angles range=[-0.2000, 0.9000]
+[ACTION] First 6 joints: target=[-0.3225 -0.3085 -0.033   0.5584 -0.296  -0.1213], default=[-0.1  0.   0.   0.3 -0.2  0. ]
+============================================================
+
+
+============================================================
+[STEP 7] t=0.140s
+============================================================
+[IMU] quat(WXYZ)=[0.6227, 0.0611, 0.0035, 0.7800]
+[IMU] ang_vel=[0.2544, 0.5995, 0.2116]
+[IMU] roll_pitch=[0.0821, -0.0911] (deg: [4.70, -5.22])
+[JOINT] qj_obs (scaled) range=[-0.4121, 0.5444]
+[JOINT] dqj_obs (scaled) range=[-0.2526, 0.2159]
+[REF_MOTION] next_root_height=0.7873
+[REF_MOTION] next_roll_pitch=[0.0102, -0.0235]
+[REF_MOTION] next_local_vel=[0.2568, -0.0186, -0.0057]
+[REF_MOTION] next_key_body_pos range=[-0.7553, 0.3936]
+[ANCHOR_ROT] anchor_ref_rot_6d=[-0.4505, -0.8859, 0.8927, -0.4458, -0.0085, 0.1282]
+[FUTURE] future_motion_targets range=[-0.5037, 1.2338]
+[HISTORY] prop_history range=[-2.4346, 2.1966]
+[ACTION] raw action range=[-1.8261, 1.8384]
+[ACTION] action_scale=0.25
+[ACTION] target_dof_pos range=[-0.4336, 0.9827]
+[ACTION] default_angles range=[-0.2000, 0.9000]
+[ACTION] First 6 joints: target=[-0.4205 -0.0055 -0.0717  0.7299 -0.3225  0.0138], default=[-0.1  0.   0.   0.3 -0.2  0. ]
+============================================================
+
+
+============================================================
+[STEP 8] t=0.160s
+============================================================
+[IMU] quat(WXYZ)=[0.5976, 0.0723, 0.0522, 0.7968]
+[IMU] ang_vel=[-0.0253, 0.1235, 0.3512]
+[IMU] roll_pitch=[0.1707, -0.0528] (deg: [9.78, -3.02])
+[JOINT] qj_obs (scaled) range=[-0.4747, 0.4035]
+[JOINT] dqj_obs (scaled) range=[-0.1400, 0.2442]
+[REF_MOTION] next_root_height=0.7873
+[REF_MOTION] next_roll_pitch=[0.0097, -0.0233]
+[REF_MOTION] next_local_vel=[0.3195, -0.0235, -0.0070]
+[REF_MOTION] next_key_body_pos range=[-0.7545, 0.3936]
+[ANCHOR_ROT] anchor_ref_rot_6d=[-0.3999, -0.9138, 0.9097, -0.3863, -0.1117, 0.1254]
+[FUTURE] future_motion_targets range=[-0.4925, 1.2354]
+[HISTORY] prop_history range=[-2.4346, 2.1966]
+[ACTION] raw action range=[-1.9727, 2.3930]
+[ACTION] action_scale=0.25
+[ACTION] target_dof_pos range=[-0.6600, 1.1046]
+[ACTION] default_angles range=[-0.2000, 0.9000]
+[ACTION] First 6 joints: target=[-0.5596 -0.0316 -0.1135  0.78   -0.4721  0.017 ], default=[-0.1  0.   0.   0.3 -0.2  0. ]
+============================================================
+
+
+============================================================
+[STEP 9] t=0.180s
+============================================================
+[IMU] quat(WXYZ)=[0.5545, 0.0789, 0.0194, 0.8282]
+[IMU] ang_vel=[-0.1414, -0.4581, 0.3264]
+[IMU] roll_pitch=[0.1207, -0.1094] (deg: [6.92, -6.27])
+[JOINT] qj_obs (scaled) range=[-0.4538, 0.4209]
+[JOINT] dqj_obs (scaled) range=[-0.3092, 0.1457]
+[REF_MOTION] next_root_height=0.7873
+[REF_MOTION] next_roll_pitch=[0.0089, -0.0231]
+[REF_MOTION] next_local_vel=[0.3823, -0.0289, -0.0083]
+[REF_MOTION] next_key_body_pos range=[-0.7535, 0.3936]
+[ANCHOR_ROT] anchor_ref_rot_6d=[-0.3012, -0.9454, 0.9517, -0.2900, -0.0587, 0.1489]
+[FUTURE] future_motion_targets range=[-0.4716, 1.2359]
+[HISTORY] prop_history range=[-2.4346, 2.3930]
+[ACTION] raw action range=[-1.9577, 1.7099]
+[ACTION] action_scale=0.25
+[ACTION] target_dof_pos range=[-0.4941, 1.1047]
+[ACTION] default_angles range=[-0.2000, 0.9000]
+[ACTION] First 6 joints: target=[-0.4941 -0.0346 -0.0977  0.7066 -0.3521  0.0226], default=[-0.1  0.   0.   0.3 -0.2  0. ]
+============================================================
+
+
+============================================================
+[STEP 10] t=0.200s
+============================================================
+[IMU] quat(WXYZ)=[0.5519, 0.1040, -0.0033, 0.8274]
+[IMU] ang_vel=[0.1169, 0.1911, -0.1156]
+[IMU] roll_pitch=[0.1113, -0.1766] (deg: [6.38, -10.12])
+[JOINT] qj_obs (scaled) range=[-0.4609, 0.5503]
+[JOINT] dqj_obs (scaled) range=[-0.1321, 0.1406]
+[REF_MOTION] next_root_height=0.7873
+[REF_MOTION] next_roll_pitch=[0.0089, -0.0234]
+[REF_MOTION] next_local_vel=[0.4324, -0.0334, -0.0095]
+[REF_MOTION] next_key_body_pos range=[-0.7521, 0.3935]
+[ANCHOR_ROT] anchor_ref_rot_6d=[-0.2979, -0.9353, 0.9542, -0.2856, -0.0293, 0.2090]
+[FUTURE] future_motion_targets range=[-0.4947, 1.2360]
+[HISTORY] prop_history range=[-2.4346, 2.3930]
+[ACTION] raw action range=[-2.4295, 1.4461]
+[ACTION] action_scale=0.25
+[ACTION] target_dof_pos range=[-0.4072, 0.9919]
+[ACTION] default_angles range=[-0.2000, 0.9000]
+[ACTION] First 6 joints: target=[-0.3863 -0.0696 -0.1674  0.4199 -0.4072 -0.0143], default=[-0.1  0.   0.   0.3 -0.2  0. ]
+============================================================
+
+
+============================================================
+[STEP 11] t=0.220s
+============================================================
+[IMU] quat(WXYZ)=[0.5677, 0.0670, 0.0445, 0.8193]
+[IMU] ang_vel=[0.0327, 0.6501, -0.3757]
+[IMU] roll_pitch=[0.1497, -0.0593] (deg: [8.58, -3.40])
+[JOINT] qj_obs (scaled) range=[-0.4842, 0.4508]
+[JOINT] dqj_obs (scaled) range=[-0.2465, 0.2888]
+[REF_MOTION] next_root_height=0.7873
+[REF_MOTION] next_roll_pitch=[0.0099, -0.0245]
+[REF_MOTION] next_local_vel=[0.4764, -0.0368, -0.0108]
+[REF_MOTION] next_key_body_pos range=[-0.7511, 0.3935]
+[ANCHOR_ROT] anchor_ref_rot_6d=[-0.3330, -0.9398, 0.9380, -0.3218, -0.0967, 0.1151]
+[FUTURE] future_motion_targets range=[-0.5024, 1.2346]
+[HISTORY] prop_history range=[-2.4346, 2.3930]
+[ACTION] raw action range=[-2.8578, 2.2725]
+[ACTION] action_scale=0.25
+[ACTION] target_dof_pos range=[-0.9145, 1.0213]
+[ACTION] default_angles range=[-0.2000, 0.9000]
+[ACTION] First 6 joints: target=[-0.4819 -0.2972 -0.0164  0.1225 -0.4123 -0.067 ], default=[-0.1  0.   0.   0.3 -0.2  0. ]
+============================================================
+
+
+============================================================
+[STEP 12] t=0.240s
+============================================================
+[IMU] quat(WXYZ)=[0.5926, 0.0060, 0.0556, 0.8035]
+[IMU] ang_vel=[0.1745, -0.3098, -0.3076]
+[IMU] roll_pitch=[0.0967, 0.0562] (deg: [5.54, 3.22])
+[JOINT] qj_obs (scaled) range=[-0.5414, 0.3538]
+[JOINT] dqj_obs (scaled) range=[-0.2706, 0.4266]
+[REF_MOTION] next_root_height=0.7873
+[REF_MOTION] next_roll_pitch=[0.0131, -0.0272]
+[REF_MOTION] next_local_vel=[0.5084, -0.0375, -0.0128]
+[REF_MOTION] next_key_body_pos range=[-0.7507, 0.3934]
+[ANCHOR_ROT] anchor_ref_rot_6d=[-0.3811, -0.9239, 0.9208, -0.3825, -0.0835, -0.0020]
+[FUTURE] future_motion_targets range=[-0.5037, 1.2338]
+[HISTORY] prop_history range=[-2.8578, 2.3930]
+[ACTION] raw action range=[-1.6331, 1.6516]
+[ACTION] action_scale=0.25
+[ACTION] target_dof_pos range=[-0.5547, 1.3129]
+[ACTION] default_angles range=[-0.2000, 0.9000]
+[ACTION] First 6 joints: target=[-4.040e-01 -3.622e-01 -1.000e-04  3.491e-01 -2.462e-01 -1.110e-01], default=[-0.1  0.   0.   0.3 -0.2  0. ]
+============================================================
+

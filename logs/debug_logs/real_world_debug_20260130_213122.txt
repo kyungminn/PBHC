@@ -1,0 +1,241 @@
+============================================================
+[INIT_FRAME] INITIALIZATION (ref-to-robot transform)
+============================================================
+[INIT_FRAME] robot_init_quat(XYZW)=[0.0018, 0.0002, 0.7379, 0.6749]
+[INIT_FRAME] motion_init_quat(XYZW)=[-0.0042, -0.0121, -0.6811, 0.7320]
+[INIT_FRAME] q_rel(XYZW)=[-0.0046, 0.0102, 0.9999, -0.0086]
+[INIT_FRAME] robot_yaw=95.1°, motion_yaw=-85.9°
+[INIT_FRAME] yaw_diff=181.0° (will be handled by q_rel transform)
+[INIT_FRAME] robot_roll_pitch=[0.16°, -0.13°]
+[INIT_FRAME] motion_roll_pitch=[0.59°, -1.35°]
+[INIT_FRAME] roll_pitch_diff=[-0.43°, 1.21°]
+[INIT_FRAME] motion_init_dof_pos range=[-0.2814, 1.1705]
+[INIT_FRAME] default_angles range=[-0.2000, 0.9000]
+[INIT_FRAME] default - motion_init_dof: range=[-0.3110, 0.2775], mean=-0.0104
+============================================================
+
+
+============================================================
+[STEP 1] t=0.020s, motion_time=0.040s
+============================================================
+[IMU] quat_raw(WXYZ)=[0.6749, 0.0018, 0.0002, 0.7379]
+[IMU] ang_vel=[0.0009, 0.0013, 0.0000]
+[IMU] roll_pitch=[0.0028, -0.0023] (deg: [0.16, -0.13])
+[YAW] robot_current=95.1°, motion_raw=-85.9°
+[YAW] ref_in_robot_frame=95.1°
+[YAW] yaw_diff(robot - ref_in_robot)=0.0°
+[QUAT] robot_quat(XYZW)=[0.0018, 0.0002, 0.7379, 0.6749]
+[QUAT] ref_in_robot_frame(XYZW)=[0.0018, 0.0002, 0.7379, 0.6749]
+[QUAT] rel_quat(XYZW)=[-0.0000, 0.0000, 0.0000, 1.0000]
+[JOINT] qj_raw (rad) range=[-0.0676, 0.0325]
+[JOINT] qj_obs (scaled, offset-compensated) range=[-0.0676, 0.0325]
+[JOINT] dqj_obs (scaled) range=[-0.0014, 0.0016]
+[JOINT] init_offset range=[-0.0676, 0.0325]
+[REF_MOTION] next_root_height=0.7873
+[REF_MOTION] next_roll_pitch=[0.0102, -0.0235] (deg: [0.59, -1.35])
+[REF_MOTION] next_local_vel=[0.0190, -0.0014, -0.0004]
+[REF_MOTION] next_key_body_pos range=[-0.7520, 0.3932]
+[REF_MOTION] next_dof_pos range=[-0.2814, 1.1705]
+[DOF_DIFF] robot_dof - ref_dof: range=[-1.1588, 0.2192], mean=-0.1070
+[POSE_DIFF] roll_diff=-0.43°, pitch_diff=1.21°
+[ANCHOR_ROT] anchor_ref_rot_6d=[1.0000, -0.0000, -0.0000, 1.0000, -0.0000, -0.0000]
+[FUTURE] future_motion_targets range=[-0.4947, 1.2360]
+[HISTORY] prop_history range=[-0.0676, 0.0325]
+[ACTION] raw action range=[-0.9783, 0.7972]
+[ACTION] action_scale (per-joint) range=[0.3507, 0.5475]
+[ACTION] target_dof_pos range=[-0.6291, 0.8538]
+[ACTION] default_angles range=[-0.2000, 0.9000]
+[ACTION_DETAIL] Per-joint actions (raw, scaled, target, default):
+  L_Leg: raw=[ 0.26, 0.34, 0.29,-0.11, 0.01,-0.05]
+         target=[ 0.04 , 0.118, 0.159, 0.26 ,-0.195,-0.021], default=[-0.1, 0. , 0. , 0.3,-0.2, 0. ]
+  R_Leg: raw=[-0.12,-0.02,-0.16,-0.09,-0.02,-0.1 ]
+         target=[-0.164,-0.008,-0.089, 0.268,-0.208,-0.045], default=[-0.1, 0. , 0. , 0.3,-0.2, 0. ]
+  Waist: raw=[-0.15, 0.01, 0.49]
+         target=[-0.082, 0.005, 0.213], default=[0.,0.,0.]
+  L_Arm: raw=[ 0.23, 0.8 , 0.24,-0.3 ]
+         target=[0.3  ,0.55 ,0.103,0.767], default=[0.2,0.2,0. ,0.9]
+  R_Arm: raw=[ 0.22,-0.98, 0.15,-0.11]
+         target=[ 0.299,-0.629, 0.067, 0.854], default=[ 0.2,-0.2, 0. , 0.9]
+[ACTION_MAX] Largest action at joint 20: raw=-0.9783, target=-0.6291
+============================================================
+
+
+============================================================
+[STEP 2] t=0.040s, motion_time=0.060s
+============================================================
+[IMU] quat_raw(WXYZ)=[0.6750, 0.0059, -0.0035, 0.7378]
+[IMU] ang_vel=[-0.0109, -0.5930, 0.0070]
+[IMU] roll_pitch=[0.0029, -0.0135] (deg: [0.17, -0.77])
+[YAW] robot_current=95.1°, motion_raw=-85.9°
+[YAW] ref_in_robot_frame=95.1°
+[YAW] yaw_diff(robot - ref_in_robot)=-0.0°
+[QUAT] robot_quat(XYZW)=[0.0059, -0.0035, 0.7378, 0.6750]
+[QUAT] ref_in_robot_frame(XYZW)=[0.0018, 0.0002, 0.7379, 0.6749]
+[QUAT] rel_quat(XYZW)=[-0.0001, 0.0056, 0.0002, 1.0000]
+[JOINT] qj_raw (rad) range=[-0.0688, 0.0788]
+[JOINT] qj_obs (scaled, offset-compensated) range=[-0.0607, 0.0834]
+[JOINT] dqj_obs (scaled) range=[-0.1794, 0.2122]
+[JOINT] init_offset range=[-0.0676, 0.0325]
+[REF_MOTION] next_root_height=0.7873
+[REF_MOTION] next_roll_pitch=[0.0102, -0.0235] (deg: [0.59, -1.35])
+[REF_MOTION] next_local_vel=[0.0343, -0.0025, -0.0008]
+[REF_MOTION] next_key_body_pos range=[-0.7520, 0.3932]
+[REF_MOTION] next_dof_pos range=[-0.2814, 1.1705]
+[DOF_DIFF] robot_dof - ref_dof: range=[-1.2081, 0.2203], mean=-0.1009
+[POSE_DIFF] roll_diff=-0.42°, pitch_diff=0.57°
+[ANCHOR_ROT] anchor_ref_rot_6d=[0.9999, -0.0003, 0.0003, 1.0000, -0.0111, -0.0001]
+[FUTURE] future_motion_targets range=[-0.5024, 1.2346]
+[HISTORY] prop_history range=[-0.9783, 0.7972]
+[ACTION] raw action range=[-0.4386, 0.6940]
+[ACTION] action_scale (per-joint) range=[0.3507, 0.5475]
+[ACTION] target_dof_pos range=[-0.3888, 0.9309]
+[ACTION] default_angles range=[-0.2000, 0.9000]
+[ACTION_DETAIL] Per-joint actions (raw, scaled, target, default):
+  L_Leg: raw=[ 0.31, 0.2 , 0.3 ,-0.26,-0.04, 0.03]
+         target=[ 0.071, 0.07 , 0.164, 0.208,-0.216, 0.011], default=[-0.1, 0. , 0. , 0.3,-0.2, 0. ]
+  R_Leg: raw=[-0.01,-0.07,-0.22,-0.44,-0.22, 0.04]
+         target=[-0.103,-0.025,-0.121, 0.146,-0.294, 0.019], default=[-0.1, 0. , 0. , 0.3,-0.2, 0. ]
+  Waist: raw=[-0.23,-0.09, 0.28]
+         target=[-0.128,-0.038, 0.122], default=[0.,0.,0.]
+  L_Arm: raw=[ 0.08, 0.18,-0.33,-0.24]
+         target=[ 0.234, 0.278,-0.144, 0.793], default=[0.2,0.2,0. ,0.9]
+  R_Arm: raw=[ 0.46,-0.43, 0.69, 0.07]
+         target=[ 0.4  ,-0.389, 0.304, 0.931], default=[ 0.2,-0.2, 0. , 0.9]
+[ACTION_MAX] Largest action at joint 21: raw=0.6940, target=0.3044
+============================================================
+
+
+============================================================
+[STEP 3] t=0.060s, motion_time=0.080s
+============================================================
+[IMU] quat_raw(WXYZ)=[0.6709, 0.0313, -0.0263, 0.7404]
+[IMU] ang_vel=[0.0004, 0.1244, 0.1876]
+[IMU] roll_pitch=[0.0030, -0.0816] (deg: [0.17, -4.68])
+[YAW] robot_current=95.6°, motion_raw=-85.9°
+[YAW] ref_in_robot_frame=95.1°
+[YAW] yaw_diff(robot - ref_in_robot)=0.5°
+[QUAT] robot_quat(XYZW)=[0.0313, -0.0263, 0.7404, 0.6709]
+[QUAT] ref_in_robot_frame(XYZW)=[0.0018, 0.0002, 0.7379, 0.6749]
+[QUAT] rel_quat(XYZW)=[-0.0003, 0.0396, -0.0047, 0.9992]
+[JOINT] qj_raw (rad) range=[-0.3523, 0.2719]
+[JOINT] qj_obs (scaled, offset-compensated) range=[-0.3634, 0.2835]
+[JOINT] dqj_obs (scaled) range=[-0.2630, 0.1791]
+[JOINT] init_offset range=[-0.0676, 0.0325]
+[REF_MOTION] next_root_height=0.7873
+[REF_MOTION] next_roll_pitch=[0.0102, -0.0235] (deg: [0.59, -1.35])
+[REF_MOTION] next_local_vel=[0.0600, -0.0043, -0.0013]
+[REF_MOTION] next_key_body_pos range=[-0.7520, 0.3932]
+[REF_MOTION] next_dof_pos range=[-0.2814, 1.1705]
+[DOF_DIFF] robot_dof - ref_dof: range=[-1.2427, 0.2405], mean=-0.0900
+[POSE_DIFF] roll_diff=-0.41°, pitch_diff=-3.33°
+[ANCHOR_ROT] anchor_ref_rot_6d=[0.9968, 0.0094, -0.0095, 1.0000, -0.0792, -0.0010]
+[FUTURE] future_motion_targets range=[-0.5037, 1.2338]
+[HISTORY] prop_history range=[-0.9783, 0.7972]
+[ACTION] raw action range=[-0.8975, 0.9317]
+[ACTION] action_scale (per-joint) range=[0.3507, 0.5475]
+[ACTION] target_dof_pos range=[-0.4307, 0.7909]
+[ACTION] default_angles range=[-0.2000, 0.9000]
+[ACTION_DETAIL] Per-joint actions (raw, scaled, target, default):
+  L_Leg: raw=[ 0.05, 0.37, 0.22,-0.42,-0.23, 0.1 ]
+         target=[-0.07 , 0.13 , 0.12 , 0.153,-0.302, 0.045], default=[-0.1, 0. , 0. , 0.3,-0.2, 0. ]
+  R_Leg: raw=[-0.2 ,-0.1 ,-0.2 ,-0.39,-0.53, 0.02]
+         target=[-0.207,-0.034,-0.111, 0.162,-0.431, 0.01 ], default=[-0.1, 0. , 0. , 0.3,-0.2, 0. ]
+  Waist: raw=[-0.18, 0.05, 0.08]
+         target=[-0.097, 0.024, 0.034], default=[0.,0.,0.]
+  L_Arm: raw=[ 0.25,-0.29,-0.74,-0.25]
+         target=[ 0.31 , 0.071,-0.323, 0.791], default=[0.2,0.2,0. ,0.9]
+  R_Arm: raw=[ 0.41, 0.38, 0.93,-0.9 ]
+         target=[ 0.381,-0.035, 0.409, 0.506], default=[ 0.2,-0.2, 0. , 0.9]
+[ACTION_MAX] Largest action at joint 21: raw=0.9317, target=0.4086
+============================================================
+
+
+============================================================
+[STEP 4] t=0.080s, motion_time=0.100s
+============================================================
+[IMU] quat_raw(WXYZ)=[0.6431, 0.0160, -0.0067, 0.7656]
+[IMU] ang_vel=[-0.0406, 0.6349, 0.1937]
+[IMU] roll_pitch=[0.0102, -0.0331] (deg: [0.59, -1.90])
+[YAW] robot_current=99.9°, motion_raw=-85.9°
+[YAW] ref_in_robot_frame=95.1°
+[YAW] yaw_diff(robot - ref_in_robot)=4.8°
+[QUAT] robot_quat(XYZW)=[0.0160, -0.0067, 0.7656, 0.6431]
+[QUAT] ref_in_robot_frame(XYZW)=[0.0018, 0.0002, 0.7379, 0.6749]
+[QUAT] rel_quat(XYZW)=[-0.0045, 0.0151, -0.0423, 0.9990]
+[JOINT] qj_raw (rad) range=[-0.2541, 0.2623]
+[JOINT] qj_obs (scaled, offset-compensated) range=[-0.2651, 0.2650]
+[JOINT] dqj_obs (scaled) range=[-0.3187, 0.2740]
+[JOINT] init_offset range=[-0.0676, 0.0325]
+[REF_MOTION] next_root_height=0.7873
+[REF_MOTION] next_roll_pitch=[0.0102, -0.0235] (deg: [0.59, -1.35])
+[REF_MOTION] next_local_vel=[0.0909, -0.0066, -0.0020]
+[REF_MOTION] next_key_body_pos range=[-0.7520, 0.3932]
+[REF_MOTION] next_dof_pos range=[-0.2814, 1.1705]
+[DOF_DIFF] robot_dof - ref_dof: range=[-1.2438, 0.2402], mean=-0.0971
+[POSE_DIFF] roll_diff=-0.00°, pitch_diff=-0.55°
+[ANCHOR_ROT] anchor_ref_rot_6d=[0.9960, 0.0843, -0.0846, 0.9964, -0.0298, -0.0102]
+[FUTURE] future_motion_targets range=[-0.4925, 1.2354]
+[HISTORY] prop_history range=[-0.9783, 0.9317]
+[ACTION] raw action range=[-2.6442, 1.7979]
+[ACTION] action_scale (per-joint) range=[0.3507, 0.5475]
+[ACTION] target_dof_pos range=[-1.3597, 0.9885]
+[ACTION] default_angles range=[-0.2000, 0.9000]
+[ACTION_DETAIL] Per-joint actions (raw, scaled, target, default):
+  L_Leg: raw=[ 0.44, 0.69, 0.4 ,-0.27,-0.34, 0.09]
+         target=[ 0.139, 0.243, 0.22 , 0.206,-0.35 , 0.04 ], default=[-0.1, 0. , 0. , 0.3,-0.2, 0. ]
+  R_Leg: raw=[-0.51,-0.01,-0.16, 0.15,-0.68,-0.04]
+         target=[-0.379,-0.004,-0.088, 0.352,-0.498,-0.018], default=[-0.1, 0. , 0. , 0.3,-0.2, 0. ]
+  Waist: raw=[-0.17,-0.25, 0.52]
+         target=[-0.094,-0.112, 0.229], default=[0.,0.,0.]
+  L_Arm: raw=[ 0.49, 1.8 , 0.19,-1.08]
+         target=[0.417,0.989,0.081,0.426], default=[0.2,0.2,0. ,0.9]
+  R_Arm: raw=[ 1.7 ,-2.64,-0.2 ,-0.98]
+         target=[ 0.945,-1.36 ,-0.09 , 0.472], default=[ 0.2,-0.2, 0. , 0.9]
+[ACTION_MAX] Largest action at joint 20: raw=-2.6442, target=-1.3597
+============================================================
+
+
+============================================================
+[STEP 5] t=0.100s, motion_time=0.120s
+============================================================
+[IMU] quat_raw(WXYZ)=[0.6560, -0.0205, 0.0139, 0.7544]
+[IMU] ang_vel=[0.0702, -0.2867, -0.2609]
+[IMU] roll_pitch=[-0.0059, 0.0492] (deg: [-0.34, 2.82])
+[YAW] robot_current=98.0°, motion_raw=-85.9°
+[YAW] ref_in_robot_frame=95.1°
+[YAW] yaw_diff(robot - ref_in_robot)=2.9°
+[QUAT] robot_quat(XYZW)=[-0.0205, 0.0139, 0.7544, 0.6560]
+[QUAT] ref_in_robot_frame(XYZW)=[0.0018, 0.0002, 0.7379, 0.6749]
+[QUAT] rel_quat(XYZW)=[0.0049, -0.0257, -0.0251, 0.9993]
+[JOINT] qj_raw (rad) range=[-0.3340, 0.4023]
+[JOINT] qj_obs (scaled, offset-compensated) range=[-0.3457, 0.4050]
+[JOINT] dqj_obs (scaled) range=[-0.3792, 0.3160]
+[JOINT] init_offset range=[-0.0676, 0.0325]
+[REF_MOTION] next_root_height=0.7873
+[REF_MOTION] next_roll_pitch=[0.0102, -0.0235] (deg: [0.59, -1.35])
+[REF_MOTION] next_local_vel=[0.1404, -0.0102, -0.0031]
+[REF_MOTION] next_key_body_pos range=[-0.7520, 0.3932]
+[REF_MOTION] next_dof_pos range=[-0.2814, 1.1705]
+[DOF_DIFF] robot_dof - ref_dof: range=[-1.5045, 0.3168], mean=-0.1037
+[POSE_DIFF] roll_diff=-0.92°, pitch_diff=4.16°
+[ANCHOR_ROT] anchor_ref_rot_6d=[0.9974, 0.0498, -0.0504, 0.9987, 0.0511, 0.0111]
+[FUTURE] future_motion_targets range=[-0.4716, 1.2359]
+[HISTORY] prop_history range=[-2.6442, 1.7979]
+[ACTION] raw action range=[-2.0811, 1.7049]
+[ACTION] action_scale (per-joint) range=[0.3507, 0.5475]
+[ACTION] target_dof_pos range=[-1.1127, 0.9477]
+[ACTION] default_angles range=[-0.2000, 0.9000]
+[ACTION_DETAIL] Per-joint actions (raw, scaled, target, default):
+  L_Leg: raw=[ 1.14, 0.2 , 0.41,-0.26,-0.01, 0.04]
+         target=[ 0.523, 0.07 , 0.225, 0.209,-0.205, 0.016], default=[-0.1, 0. , 0. , 0.3,-0.2, 0. ]
+  R_Leg: raw=[-0.37,-0.03,-0.01,-0.09,-0.6 ,-0.06]
+         target=[-0.305,-0.01 ,-0.008, 0.27 ,-0.464,-0.024], default=[-0.1, 0. , 0. , 0.3,-0.2, 0. ]
+  Waist: raw=[-0.  , 0.51, 0.15]
+         target=[-0.001, 0.225, 0.066], default=[0.,0.,0.]
+  L_Arm: raw=[ 0.63, 1.31, 0.14,-0.71]
+         target=[0.475,0.774,0.063,0.589], default=[0.2,0.2,0. ,0.9]
+  R_Arm: raw=[ 1.7 ,-2.08,-0.06,-1.27]
+         target=[ 0.948,-1.113,-0.024, 0.342], default=[ 0.2,-0.2, 0. , 0.9]
+[ACTION_MAX] Largest action at joint 20: raw=-2.0811, target=-1.1127
+============================================================
+

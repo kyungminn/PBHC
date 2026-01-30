@@ -133,6 +133,12 @@ class Controller:
         self.init_frame_set = False
         self.robot_yaw_offset = None  # Robot's initial heading quaternion (XYZW)
         self.motion_yaw_offset = None  # Motion's initial heading quaternion (XYZW)
+        
+        # Initial dof_pos offset compensation (to handle imperfect default pose)
+        self.init_dof_pos_offset = None
+        
+        # Initial roll/pitch offset compensation (robot cannot achieve perfect upright pose)
+        self.init_roll_pitch_offset = None
 
         if config.msg_type == "hg":
             # g1 and h1_2 use the hg msg type
@@ -290,31 +296,69 @@ class Controller:
         print(f"Loaded motion data with MotionLib: {self.motion_num_frames} frames at {self.motion_fps} fps")
     
     def _setup_init_frame(self, robot_quat_xyzw):
-        """Setup initial frames for yaw offset alignment.
-        Called once on the first frame to capture robot and motion yaw offsets.
-        Method 2: Remove yaw offsets from both robot and motion to compare relative orientations.
+        """Setup initial frames for reference-to-robot frame transformation.
+        Called once on the first frame to capture robot and motion initial orientations.
+        This follows the same approach as sim-to-sim (urcirobot.py).
         """
-        # Robot yaw offset (initial heading)
-        self.robot_yaw_offset = calc_heading_quat_xyzw(robot_quat_xyzw)
+        # Store robot initial orientation (XYZW)
+        self.robot_init_rot_xyzw = robot_quat_xyzw.copy()
         
-        # Motion yaw offset - get from t=0 (first frame of motion)
+        # Motion initial orientation - get from t=0 (first frame of motion)
         motion_ids = torch.zeros((1,), dtype=torch.int32)
         motion_time_zero = torch.tensor(0.0, dtype=torch.float32)
         motion_res_init = self.motion_lib.get_motion_state(motion_ids, motion_time_zero)
-        ref_init_rot_xyzw = motion_res_init["root_rot"][0].numpy()
-        self.motion_yaw_offset = calc_heading_quat_xyzw(ref_init_rot_xyzw)
+        self.ref_init_rot_xyzw = motion_res_init["root_rot"][0].numpy()  # (4,) XYZW
+        self.ref_init_pos = motion_res_init["root_pos"][0].numpy()  # (3,)
+        ref_init_dof_pos = motion_res_init["dof_pos"][0].numpy()
+        
+        # Compute q_rel: relative rotation from motion frame to robot frame
+        # q_rel = robot_init_rot * ref_init_rot.inverse()
+        # This transforms any motion quaternion to robot frame: q_new = q_rel * ref_quat
+        ref_init_inv = quat_inverse_xyzw(self.ref_init_rot_xyzw)
+        self.q_rel = quat_mul_xyzw(self.robot_init_rot_xyzw, ref_init_inv)
         
         self.init_frame_set = True
         
         # Compute yaw difference for debugging
-        robot_yaw = 2 * np.arctan2(self.robot_yaw_offset[2], self.robot_yaw_offset[3])
-        motion_yaw = 2 * np.arctan2(self.motion_yaw_offset[2], self.motion_yaw_offset[3])
+        robot_yaw = 2 * np.arctan2(robot_quat_xyzw[2], robot_quat_xyzw[3])
+        motion_yaw = 2 * np.arctan2(self.ref_init_rot_xyzw[2], self.ref_init_rot_xyzw[3])
         yaw_diff_deg = np.degrees(robot_yaw - motion_yaw)
         
-        self._debug_log(f"[INIT_FRAME] robot_yaw_offset={self.robot_yaw_offset} (yaw={np.degrees(robot_yaw):.1f}°)")
-        self._debug_log(f"[INIT_FRAME] motion_yaw_offset={self.motion_yaw_offset} (yaw={np.degrees(motion_yaw):.1f}°)")
-        self._debug_log(f"[INIT_FRAME] yaw_diff={yaw_diff_deg:.1f}° (both offsets will be removed)")
-        print(f"[INIT_FRAME] Yaw offsets captured: robot={np.degrees(robot_yaw):.1f}°, motion={np.degrees(motion_yaw):.1f}°")
+        # Compute robot's initial roll/pitch from quaternion (XYZW)
+        x, y, z, w = robot_quat_xyzw[0], robot_quat_xyzw[1], robot_quat_xyzw[2], robot_quat_xyzw[3]
+        robot_roll = np.arctan2(2.0 * (w * x + y * z), 1.0 - 2.0 * (x**2 + y**2))
+        robot_pitch = np.arcsin(np.clip(2.0 * (w * y - z * x), -1.0, 1.0))
+        
+        # Compute motion's initial roll/pitch
+        mx, my, mz, mw = self.ref_init_rot_xyzw[0], self.ref_init_rot_xyzw[1], self.ref_init_rot_xyzw[2], self.ref_init_rot_xyzw[3]
+        motion_roll = np.arctan2(2.0 * (mw * mx + my * mz), 1.0 - 2.0 * (mx**2 + my**2))
+        motion_pitch = np.arcsin(np.clip(2.0 * (mw * my - mz * mx), -1.0, 1.0))
+        
+        self._debug_log(f"{'='*60}")
+        self._debug_log(f"[INIT_FRAME] INITIALIZATION (ref-to-robot transform)")
+        self._debug_log(f"{'='*60}")
+        self._debug_log(f"[INIT_FRAME] robot_init_quat(XYZW)=[{robot_quat_xyzw[0]:.4f}, {robot_quat_xyzw[1]:.4f}, {robot_quat_xyzw[2]:.4f}, {robot_quat_xyzw[3]:.4f}]")
+        self._debug_log(f"[INIT_FRAME] motion_init_quat(XYZW)=[{self.ref_init_rot_xyzw[0]:.4f}, {self.ref_init_rot_xyzw[1]:.4f}, {self.ref_init_rot_xyzw[2]:.4f}, {self.ref_init_rot_xyzw[3]:.4f}]")
+        self._debug_log(f"[INIT_FRAME] q_rel(XYZW)=[{self.q_rel[0]:.4f}, {self.q_rel[1]:.4f}, {self.q_rel[2]:.4f}, {self.q_rel[3]:.4f}]")
+        self._debug_log(f"[INIT_FRAME] robot_yaw={np.degrees(robot_yaw):.1f}°, motion_yaw={np.degrees(motion_yaw):.1f}°")
+        self._debug_log(f"[INIT_FRAME] yaw_diff={yaw_diff_deg:.1f}° (will be handled by q_rel transform)")
+        self._debug_log(f"[INIT_FRAME] robot_roll_pitch=[{np.degrees(robot_roll):.2f}°, {np.degrees(robot_pitch):.2f}°]")
+        self._debug_log(f"[INIT_FRAME] motion_roll_pitch=[{np.degrees(motion_roll):.2f}°, {np.degrees(motion_pitch):.2f}°]")
+        self._debug_log(f"[INIT_FRAME] roll_pitch_diff=[{np.degrees(robot_roll - motion_roll):.2f}°, {np.degrees(robot_pitch - motion_pitch):.2f}°]")
+        self._debug_log(f"[INIT_FRAME] motion_init_dof_pos range=[{ref_init_dof_pos.min():.4f}, {ref_init_dof_pos.max():.4f}]")
+        self._debug_log(f"[INIT_FRAME] default_angles range=[{self.default_angles.min():.4f}, {self.default_angles.max():.4f}]")
+        dof_diff = self.default_angles - ref_init_dof_pos
+        self._debug_log(f"[INIT_FRAME] default - motion_init_dof: range=[{dof_diff.min():.4f}, {dof_diff.max():.4f}], mean={dof_diff.mean():.4f}")
+        self._debug_log(f"{'='*60}\n")
+        print(f"[INIT_FRAME] Yaw diff: {yaw_diff_deg:.1f}° (handled by q_rel transform)")
+        print(f"[INIT_FRAME] Robot roll/pitch: [{np.degrees(robot_roll):.2f}°, {np.degrees(robot_pitch):.2f}°]")
+    
+    def _ref_to_robot_frame(self, ref_quat_xyzw):
+        """Transform reference motion quaternion to robot frame.
+        This is equivalent to fn_ref_to_robot_frame in urcirobot.py.
+        q_new = q_rel * ref_quat
+        """
+        return quat_mul_xyzw(self.q_rel, ref_quat_xyzw)
     
     def _log_observation(self, actor_obs, future_motion_targets, prop_history, raw_obs):
         """Log observation data for debugging."""
@@ -347,7 +391,7 @@ class Controller:
                 "motion_file": self.motion_file,
                 "policy_path": self.config.policy_path,
                 "control_dt": self.config.control_dt,
-                "action_scale": self.config.action_scale,
+                "action_scale": self.config.action_scale.tolist() if isinstance(self.config.action_scale, np.ndarray) else self.config.action_scale,
                 "ang_vel_scale": self.config.ang_vel_scale,
                 "dof_pos_scale": self.config.dof_pos_scale,
                 "dof_vel_scale": self.config.dof_vel_scale,
@@ -431,7 +475,9 @@ class Controller:
         
         for step in tar_steps:
             time_offset = step * self.config.control_dt
-            motion_time = torch.tensor(self.counter * self.config.control_dt + time_offset, dtype=torch.float32)
+            # Use (counter - 1) to align with sim-to-sim where timer starts at 0
+            # counter=1 -> base_time=0, counter=2 -> base_time=0.02, etc.
+            motion_time = torch.tensor((self.counter - 1) * self.config.control_dt + time_offset, dtype=torch.float32)
             motion_ids = torch.zeros((1,), dtype=torch.int32)
             motion_res = self.motion_lib.get_motion_state(motion_ids, motion_time)
             
@@ -599,6 +645,16 @@ class Controller:
         # This is important because q and -q represent the same rotation
         if quat[0] < 0:
             quat = tuple(-x for x in quat)
+        
+        # Capture initial offsets on first step (BEFORE computing observations)
+        if self.init_dof_pos_offset is None and self.counter == 1:
+            self.init_dof_pos_offset = (self.qj - self.default_angles).copy()
+            print(f"Initial dof_pos offset captured: range=[{self.init_dof_pos_offset.min():.4f}, {self.init_dof_pos_offset.max():.4f}]")
+            
+            # Also capture roll/pitch offset (robot cannot be perfectly upright)
+            temp_roll_pitch = self._quat_to_roll_pitch(np.array(quat))
+            self.init_roll_pitch_offset = temp_roll_pitch.copy()
+            print(f"Initial roll/pitch offset captured: [{np.degrees(temp_roll_pitch[0]):.2f}°, {np.degrees(temp_roll_pitch[1]):.2f}°]")
 
         if self.config.imu_type == "torso":
             # h1 and h1_2 imu is on the torso
@@ -631,7 +687,13 @@ class Controller:
         gravity_orientation = get_gravity_orientation(quat)
         qj_obs = self.qj.copy()
         dqj_obs = self.dqj.copy()
-        qj_obs = (qj_obs - self.default_angles) * self.config.dof_pos_scale
+        
+        # Compensate for initial pose offset (makes dof_pos observation relative to actual initial pose)
+        if self.init_dof_pos_offset is not None:
+            qj_obs = (qj_obs - self.default_angles - self.init_dof_pos_offset) * self.config.dof_pos_scale
+        else:
+            qj_obs = (qj_obs - self.default_angles) * self.config.dof_pos_scale
+        
         dqj_obs = dqj_obs * self.config.dof_vel_scale
         ang_vel = ang_vel * self.config.ang_vel_scale
         ref_motion_phase = ((self.counter * self.config.control_dt) % self.motion_len) / self.motion_len
@@ -670,10 +732,14 @@ class Controller:
             
             # Compute roll_pitch
             roll_pitch = np.array([
-                np.arctan2(2.0 * (quat[0] * quat[1] + quat[2] * quat[3]), 
+                np.arctan2(2.0 * (quat[0] * quat[1] + quat[2] * quat[3]),
                           1.0 - 2.0 * (quat[1]**2 + quat[2]**2)),
                 np.arcsin(np.clip(2.0 * (quat[0] * quat[2] - quat[3] * quat[1]), -1.0, 1.0))
             ], dtype=np.float32)
+            
+            # Compensate for initial roll/pitch offset (robot cannot be perfectly upright)
+            if self.init_roll_pitch_offset is not None:
+                roll_pitch = roll_pitch - self.init_roll_pitch_offset
             
             # Get future motion targets
             future_motion_targets = self._get_future_motion_targets()
@@ -757,18 +823,16 @@ class Controller:
             ], axis=0)
             
             # Compute anchor_ref_rot: 6D rotation representation (first 2 columns of rotation matrix)
-            # Method 2: Remove yaw offsets from both robot and motion, then compute relative rotation
-            # This makes the observation invariant to absolute heading
+            # This follows the same approach as sim-to-sim (urcirobot.py):
+            # anchor_ref_rot = matrix_from_quat(quat_inverse(robot_quat) * ref_to_robot_frame(ref_quat))
             current_quat_xyzw = np.array([quat[1], quat[2], quat[3], quat[0]], dtype=np.float32)  # Convert WXYZ to XYZW
             
-            # Get current headings
-            current_heading = calc_heading_quat_xyzw(current_quat_xyzw)
-            motion_heading = calc_heading_quat_xyzw(next_root_rot_xyzw)
+            # Transform ref motion quaternion to robot frame
+            ref_quat_in_robot_frame = self._ref_to_robot_frame(next_root_rot_xyzw)
             
-            # Remove yaw offsets: quat * heading_offset.inv()
-            # This makes both orientations relative to their initial headings
-            robot_ori_no_yaw = remove_yaw_offset(current_quat_xyzw, self.robot_yaw_offset)
-            motion_ori_no_yaw = remove_yaw_offset(next_root_rot_xyzw, self.motion_yaw_offset)
+            # Compute relative rotation: robot_quat.inverse() * ref_quat_in_robot_frame
+            robot_quat_inv = quat_inverse_xyzw(current_quat_xyzw)
+            rel_quat = quat_mul_xyzw(robot_quat_inv, ref_quat_in_robot_frame)
             
             def quat_to_rotmat(q):
                 """Convert XYZW quaternion to 3x3 rotation matrix."""
@@ -779,13 +843,8 @@ class Controller:
                     [2*(x*z - w*y), 2*(y*z + w*x), 1 - 2*(x*x + y*y)]
                 ], dtype=np.float32)
             
-            # Compute rotation matrices from yaw-removed orientations
-            robot_rotmat = quat_to_rotmat(robot_ori_no_yaw)
-            motion_rotmat = quat_to_rotmat(motion_ori_no_yaw)
-            
-            # Relative rotation: robot_no_yaw.T @ motion_no_yaw
-            # This gives the relative roll/pitch between robot and motion
-            rel_rotmat = robot_rotmat.T @ motion_rotmat
+            # Convert relative quaternion to rotation matrix
+            rel_rotmat = quat_to_rotmat(rel_quat)
             
             # Take first 2 columns (6D representation)
             anchor_ref_rot_6d = rel_rotmat[:, :2].flatten()  # 6D
@@ -820,39 +879,59 @@ class Controller:
             # Detailed debug logging to file
             if self.debug_log_enabled and (self.counter % self.debug_log_interval == 0 or self.counter <= 3):
                 self._debug_log(f"\n{'='*60}")
-                self._debug_log(f"[STEP {self.counter}] t={self.counter * self.config.control_dt:.3f}s")
+                self._debug_log(f"[STEP {self.counter}] t={self.counter * self.config.control_dt:.3f}s, motion_time={motion_time.item():.3f}s")
                 self._debug_log(f"{'='*60}")
-                self._debug_log(f"[IMU] quat(WXYZ)=[{quat[0]:.4f}, {quat[1]:.4f}, {quat[2]:.4f}, {quat[3]:.4f}]")
+                
+                # IMU raw data
+                self._debug_log(f"[IMU] quat_raw(WXYZ)=[{quat[0]:.4f}, {quat[1]:.4f}, {quat[2]:.4f}, {quat[3]:.4f}]")
                 self._debug_log(f"[IMU] ang_vel=[{ang_vel.flatten()[0]:.4f}, {ang_vel.flatten()[1]:.4f}, {ang_vel.flatten()[2]:.4f}]")
-                self._debug_log(f"[IMU] roll_pitch=[{roll_pitch[0]:.4f}, {roll_pitch[1]:.4f}] (deg: [{np.degrees(roll_pitch[0]):.2f}, {np.degrees(roll_pitch[1]):.2f}])")
-                self._debug_log(f"[JOINT] qj_obs (scaled) range=[{qj_obs.min():.4f}, {qj_obs.max():.4f}]")
+                self._debug_log(f"[IMU] roll_pitch (offset-compensated)=[{roll_pitch[0]:.4f}, {roll_pitch[1]:.4f}] (deg: [{np.degrees(roll_pitch[0]):.2f}, {np.degrees(roll_pitch[1]):.2f}])")
+                if self.init_roll_pitch_offset is not None:
+                    self._debug_log(f"[IMU] init_roll_pitch_offset=[{self.init_roll_pitch_offset[0]:.4f}, {self.init_roll_pitch_offset[1]:.4f}] (deg: [{np.degrees(self.init_roll_pitch_offset[0]):.2f}, {np.degrees(self.init_roll_pitch_offset[1]):.2f}])")
+                
+                # Ref-to-robot frame transformation - IMPORTANT for debugging
+                robot_yaw_current = 2 * np.arctan2(current_quat_xyzw[2], current_quat_xyzw[3])
+                motion_yaw_raw = 2 * np.arctan2(next_root_rot_xyzw[2], next_root_rot_xyzw[3])
+                ref_in_robot_yaw = 2 * np.arctan2(ref_quat_in_robot_frame[2], ref_quat_in_robot_frame[3])
+                self._debug_log(f"[YAW] robot_current={np.degrees(robot_yaw_current):.1f}°, motion_raw={np.degrees(motion_yaw_raw):.1f}°")
+                self._debug_log(f"[YAW] ref_in_robot_frame={np.degrees(ref_in_robot_yaw):.1f}°")
+                self._debug_log(f"[YAW] yaw_diff(robot - ref_in_robot)={np.degrees(robot_yaw_current - ref_in_robot_yaw):.1f}°")
+                
+                # Quaternions for debugging
+                self._debug_log(f"[QUAT] robot_quat(XYZW)=[{current_quat_xyzw[0]:.4f}, {current_quat_xyzw[1]:.4f}, {current_quat_xyzw[2]:.4f}, {current_quat_xyzw[3]:.4f}]")
+                self._debug_log(f"[QUAT] ref_in_robot_frame(XYZW)=[{ref_quat_in_robot_frame[0]:.4f}, {ref_quat_in_robot_frame[1]:.4f}, {ref_quat_in_robot_frame[2]:.4f}, {ref_quat_in_robot_frame[3]:.4f}]")
+                self._debug_log(f"[QUAT] rel_quat(XYZW)=[{rel_quat[0]:.4f}, {rel_quat[1]:.4f}, {rel_quat[2]:.4f}, {rel_quat[3]:.4f}]")
+                
+                # Joint positions - raw and scaled
+                qj_raw = self.qj - self.default_angles  # actual raw joint positions (relative to default)
+                self._debug_log(f"[JOINT] qj_raw (rad) range=[{qj_raw.min():.4f}, {qj_raw.max():.4f}]")
+                self._debug_log(f"[JOINT] qj_obs (scaled, offset-compensated) range=[{qj_obs.min():.4f}, {qj_obs.max():.4f}]")
                 self._debug_log(f"[JOINT] dqj_obs (scaled) range=[{dqj_obs.min():.4f}, {dqj_obs.max():.4f}]")
+                if self.init_dof_pos_offset is not None:
+                    self._debug_log(f"[JOINT] init_offset range=[{self.init_dof_pos_offset.min():.4f}, {self.init_dof_pos_offset.max():.4f}]")
+                
+                # Reference motion data
                 self._debug_log(f"[REF_MOTION] next_root_height={next_root_height[0]:.4f}")
-                self._debug_log(f"[REF_MOTION] next_roll_pitch=[{next_roll_pitch[0]:.4f}, {next_roll_pitch[1]:.4f}]")
+                self._debug_log(f"[REF_MOTION] next_roll_pitch=[{next_roll_pitch[0]:.4f}, {next_roll_pitch[1]:.4f}] (deg: [{np.degrees(next_roll_pitch[0]):.2f}, {np.degrees(next_roll_pitch[1]):.2f}])")
                 self._debug_log(f"[REF_MOTION] next_local_vel=[{next_local_vel[0]:.4f}, {next_local_vel[1]:.4f}, {next_local_vel[2]:.4f}]")
                 self._debug_log(f"[REF_MOTION] next_key_body_pos range=[{next_key_body_pos.min():.4f}, {next_key_body_pos.max():.4f}]")
+                
+                # Compare robot vs ref dof_pos
+                dof_pos_diff = qj_raw - next_dof_pos
+                self._debug_log(f"[REF_MOTION] next_dof_pos range=[{next_dof_pos.min():.4f}, {next_dof_pos.max():.4f}]")
+                self._debug_log(f"[DOF_DIFF] robot_dof - ref_dof: range=[{dof_pos_diff.min():.4f}, {dof_pos_diff.max():.4f}], mean={dof_pos_diff.mean():.4f}")
+                
+                # Roll/pitch comparison
+                roll_diff = roll_pitch[0] - next_roll_pitch[0]
+                pitch_diff = roll_pitch[1] - next_roll_pitch[1]
+                self._debug_log(f"[POSE_DIFF] roll_diff={np.degrees(roll_diff):.2f}°, pitch_diff={np.degrees(pitch_diff):.2f}°")
+                
+                # Anchor rotation
                 self._debug_log(f"[ANCHOR_ROT] anchor_ref_rot_6d=[{anchor_ref_rot_6d[0]:.4f}, {anchor_ref_rot_6d[1]:.4f}, {anchor_ref_rot_6d[2]:.4f}, {anchor_ref_rot_6d[3]:.4f}, {anchor_ref_rot_6d[4]:.4f}, {anchor_ref_rot_6d[5]:.4f}]")
+                
+                # Input ranges
                 self._debug_log(f"[FUTURE] future_motion_targets range=[{future_motion_targets.min():.4f}, {future_motion_targets.max():.4f}]")
                 self._debug_log(f"[HISTORY] prop_history range=[{prop_history.min():.4f}, {prop_history.max():.4f}]")
-            
-            # Log observations if enabled
-            if self.obs_logging_enabled and (self.counter % self.obs_log_interval == 0):
-                self._log_observation(
-                    actor_obs=actor_obs,
-                    future_motion_targets=future_motion_targets,
-                    prop_history=prop_history,
-                    raw_obs={
-                        "actions": self.action.copy(),
-                        "anchor_ref_rot": anchor_ref_rot_6d.copy(),
-                        "base_ang_vel": ang_vel.flatten().copy(),
-                        "dof_pos": qj_obs.copy(),
-                        "dof_vel": dqj_obs.copy(),
-                        "roll_pitch": roll_pitch.copy(),
-                        "next_step_ref_motion": next_step_ref_motion.copy(),
-                        "quat": np.array(quat),
-                        "gravity_orientation": gravity_orientation.copy(),
-                    }
-                )
             
             outputs = self.policy.run(None, inputs)
         else:
@@ -861,15 +940,80 @@ class Controller:
             outputs = self.policy.run(None, {input_name: self.obs_buf.numpy()})
         
         self.action = outputs[0].squeeze()
+        
+        # Clip action to prevent instability from policy sensitivity to small IMU/orientation differences
+        # Student model trained in sim shows actions typically in [-0.3, 0.3] range
+        # Real-world IMU differences (~1-2° in roll/pitch) can cause 10x larger actions, leading to cascading instability
+        action_clip_limit = 0.6  # Conservative limit (sim max is ~0.2-0.3 typically)
+        if np.abs(self.action).max() > action_clip_limit:
+            print(f"[WARNING] Action clipped from [{self.action.min():.3f}, {self.action.max():.3f}] to [{-action_clip_limit:.3f}, {action_clip_limit:.3f}]")
+        self.action = np.clip(self.action, -action_clip_limit, action_clip_limit)
+        
+        # Log observations AFTER policy execution (so action matches the obs)
+        if self.is_student_model and self.obs_logging_enabled and (self.counter % self.obs_log_interval == 0):
+            self._log_observation(
+                actor_obs=actor_obs,
+                future_motion_targets=future_motion_targets,
+                prop_history=prop_history,
+                raw_obs={
+                    "actions": self.action.copy(),
+                    "anchor_ref_rot": anchor_ref_rot_6d.copy(),
+                    "base_ang_vel": ang_vel.flatten().copy(),
+                    "dof_pos": qj_obs.copy(),
+                    "dof_vel": dqj_obs.copy(),
+                    "roll_pitch": roll_pitch.copy(),
+                    "next_step_ref_motion": next_step_ref_motion.copy(),
+                    "quat": np.array(quat),
+                    "gravity_orientation": gravity_orientation.copy(),
+                }
+            )
         target_dof_pos = self.default_angles + self.action * self.config.action_scale
         
         # Debug logging for action output
         if self.is_student_model and self.debug_log_enabled and (self.counter % self.debug_log_interval == 0 or self.counter <= 3):
             self._debug_log(f"[ACTION] raw action range=[{self.action.min():.4f}, {self.action.max():.4f}]")
-            self._debug_log(f"[ACTION] action_scale={self.config.action_scale}")
+            
+            # Log action_scale info
+            if isinstance(self.config.action_scale, np.ndarray):
+                self._debug_log(f"[ACTION] action_scale (per-joint) range=[{self.config.action_scale.min():.4f}, {self.config.action_scale.max():.4f}]")
+            else:
+                self._debug_log(f"[ACTION] action_scale={self.config.action_scale}")
+            
             self._debug_log(f"[ACTION] target_dof_pos range=[{target_dof_pos.min():.4f}, {target_dof_pos.max():.4f}]")
             self._debug_log(f"[ACTION] default_angles range=[{self.default_angles.min():.4f}, {self.default_angles.max():.4f}]")
-            self._debug_log(f"[ACTION] First 6 joints: target={target_dof_pos[:6].round(4)}, default={self.default_angles[:6].round(4)}")
+            
+            # Detailed per-joint action output
+            joint_names = getattr(self.config, 'joint_names', None)
+            if joint_names is None:
+                joint_names = [f"joint_{i}" for i in range(len(self.action))]
+            
+            self._debug_log(f"[ACTION_DETAIL] Per-joint actions (raw, scaled, target, default):")
+            # Left leg (0-5), Right leg (6-11), Waist (12-14), Left arm (15-18), Right arm (19-22)
+            leg_groups = [
+                ("L_Leg", slice(0, 6)),
+                ("R_Leg", slice(6, 12)),
+                ("Waist", slice(12, 15)),
+                ("L_Arm", slice(15, 19)),
+                ("R_Arm", slice(19, 23)),
+            ]
+            for group_name, idx_slice in leg_groups:
+                raw_act = self.action[idx_slice]
+                # Handle both scalar and per-joint action_scale
+                if isinstance(self.config.action_scale, np.ndarray):
+                    scaled_act = raw_act * self.config.action_scale[idx_slice]
+                    scale_info = self.config.action_scale[idx_slice]
+                else:
+                    scaled_act = raw_act * self.config.action_scale
+                    scale_info = self.config.action_scale
+                target = target_dof_pos[idx_slice]
+                default = self.default_angles[idx_slice]
+                self._debug_log(f"  {group_name}: raw={np.array2string(raw_act, precision=2, separator=',')}")
+                self._debug_log(f"         target={np.array2string(target, precision=3, separator=',')}, default={np.array2string(default, precision=2, separator=',')}")
+            
+            # Find joints with largest actions
+            max_action_idx = np.argmax(np.abs(self.action))
+            self._debug_log(f"[ACTION_MAX] Largest action at joint {max_action_idx}: raw={self.action[max_action_idx]:.4f}, target={target_dof_pos[max_action_idx]:.4f}")
+            
             self._debug_log(f"{'='*60}\n")
 
         # Build low cmd

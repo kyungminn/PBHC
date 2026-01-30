@@ -33,7 +33,44 @@ class Config:
             self.ang_vel_scale = config["ang_vel_scale"]
             self.dof_pos_scale = config["dof_pos_scale"]
             self.dof_vel_scale = config["dof_vel_scale"]
-            self.action_scale = config["action_scale"]
+            
+            # action_scale can be a float or dict (per-joint)
+            action_scale_raw = config["action_scale"]
+            if isinstance(action_scale_raw, dict):
+                # Per-joint action scale - need to map to dof_names order
+                # G1 23DOF joint order:
+                dof_names = [
+                    'left_hip_pitch_joint', 'left_hip_roll_joint', 'left_hip_yaw_joint', 'left_knee_joint', 'left_ankle_pitch_joint', 'left_ankle_roll_joint',
+                    'right_hip_pitch_joint', 'right_hip_roll_joint', 'right_hip_yaw_joint', 'right_knee_joint', 'right_ankle_pitch_joint', 'right_ankle_roll_joint',
+                    'waist_yaw_joint', 'waist_roll_joint', 'waist_pitch_joint',
+                    'left_shoulder_pitch_joint', 'left_shoulder_roll_joint', 'left_shoulder_yaw_joint', 'left_elbow_joint',
+                    'right_shoulder_pitch_joint', 'right_shoulder_roll_joint', 'right_shoulder_yaw_joint', 'right_elbow_joint'
+                ]
+                
+                scales = []
+                for name in dof_names:
+                    # Extract core joint type from full name
+                    if name.startswith("left_"):
+                        core = name[5:]  # Remove "left_"
+                    elif name.startswith("right_"):
+                        core = name[6:]  # Remove "right_"
+                    else:
+                        core = name
+                    
+                    # Remove "_joint" suffix
+                    if core.endswith("_joint"):
+                        core = core[:-6]
+                    
+                    if core not in action_scale_raw:
+                        raise KeyError(f"No action_scale found for joint: {name} (core={core})")
+                    
+                    scales.append(action_scale_raw[core])
+                
+                self.action_scale = np.array(scales, dtype=np.float32)
+                print(f"Loaded per-joint action_scale: {self.action_scale}")
+            else:
+                # Fixed action scale for all joints
+                self.action_scale = action_scale_raw
             self.cmd_scale = np.array(config["cmd_scale"], dtype=np.float32)
             self.max_cmd = np.array(config["max_cmd"], dtype=np.float32)
 

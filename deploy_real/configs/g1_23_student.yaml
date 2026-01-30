@@ -54,7 +54,21 @@ arm_waist_target: [ 0.0, 0.0, 0.0,
 ang_vel_scale: 0.25
 dof_pos_scale: 1.0
 dof_vel_scale: 0.05
-action_scale: 0.25
+# Per-joint action_scale (same as g1_23dof_general.yaml used in sim-to-sim)
+action_scale:
+  hip_yaw: 0.5475464652142303
+  hip_roll: 0.3506614663788243
+  hip_pitch: 0.5475464652142303
+  knee: 0.3506614663788243
+  ankle_pitch: 0.43857731392336724
+  ankle_roll: 0.43857731392336724
+  waist_roll: 0.43857731392336724
+  waist_pitch: 0.43857731392336724
+  waist_yaw: 0.5475464652142303
+  shoulder_pitch: 0.43857731392336724
+  shoulder_roll: 0.43857731392336724
+  shoulder_yaw: 0.43857731392336724
+  elbow: 0.43857731392336724
 cmd_scale: [2.0, 2.0, 0.25]
 num_actions: 23
 num_obs: 877  # Updated for student model
