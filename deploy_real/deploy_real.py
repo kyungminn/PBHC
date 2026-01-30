@@ -301,6 +301,12 @@ class Controller:
         self._debug_log(f"[INIT_FRAME] robot_heading={self.robot_init_heading_quat}")
         self._debug_log(f"[INIT_FRAME] ref_heading={self.ref_init_heading_quat}")
         self._debug_log(f"[INIT_FRAME] q_rel={self.q_rel}")
+        
+        # Compute yaw difference for debugging
+        yaw_diff_rad = 2 * np.arctan2(self.q_rel[2], self.q_rel[3])
+        yaw_diff_deg = np.degrees(yaw_diff_rad)
+        self._debug_log(f"[INIT_FRAME] yaw_diff={yaw_diff_deg:.1f} degrees (motion aligned to robot)")
+        print(f"[INIT_FRAME] Motion aligned to robot heading (yaw diff: {yaw_diff_deg:.1f}°)")
     
     def _ref_to_robot_frame_quat(self, ref_quat_xyzw):
         """Transform reference quaternion to robot frame.
@@ -308,6 +314,13 @@ class Controller:
         if not self.init_frame_set:
             return ref_quat_xyzw
         return quat_mul_xyzw(self.q_rel, ref_quat_xyzw)
+    
+    def _ref_to_robot_frame_vec(self, vec):
+        """Transform reference vector (position/velocity) to robot frame.
+        Rotates the vector by q_rel (yaw only rotation)."""
+        if not self.init_frame_set:
+            return vec
+        return quat_apply_xyzw(self.q_rel, vec)
     
     def _log_observation(self, actor_obs, future_motion_targets, prop_history, raw_obs):
         """Log observation data for debugging."""
@@ -430,24 +443,29 @@ class Controller:
             
             # Extract data from motion library
             root_pos = motion_res["root_pos"][0].numpy()
-            root_rot_xyzw = motion_res["root_rot"][0].numpy()  # XYZW format
-            root_vel_world = motion_res["root_vel"][0].numpy()
-            root_ang_vel_world = motion_res["root_ang_vel"][0].numpy()
+            root_rot_xyzw_orig = motion_res["root_rot"][0].numpy()  # XYZW format
+            root_vel_world_orig = motion_res["root_vel"][0].numpy()
+            root_ang_vel_world_orig = motion_res["root_ang_vel"][0].numpy()
             dof_pos = motion_res["dof_pos"][0].numpy()
             
-            # Root height
+            # Transform motion to robot frame (align motion heading to robot's initial heading)
+            root_rot_xyzw = self._ref_to_robot_frame_quat(root_rot_xyzw_orig)
+            root_vel_world = self._ref_to_robot_frame_vec(root_vel_world_orig)
+            root_ang_vel_world = self._ref_to_robot_frame_vec(root_ang_vel_world_orig)
+            
+            # Root height (unchanged - vertical position doesn't depend on yaw)
             future_root_height.append(root_pos[2:3])
             
-            # Roll pitch from quaternion (convert XYZW to WXYZ)
+            # Roll pitch from transformed quaternion (convert XYZW to WXYZ)
             root_rot_wxyz = root_rot_xyzw[[3, 0, 1, 2]]
             roll_pitch = self._quat_to_roll_pitch(root_rot_wxyz)
             future_roll_pitch.append(roll_pitch)
             
-            # Root linear velocity (in local frame)
+            # Root linear velocity (in local frame of transformed motion)
             local_vel = quat_rotate_inverse(root_rot_wxyz[np.newaxis], root_vel_world[np.newaxis])[0]
             future_base_lin_vel.append(local_vel)
             
-            # Yaw angular velocity (in local frame)
+            # Yaw angular velocity (in local frame of transformed motion)
             local_ang_vel = quat_rotate_inverse(root_rot_wxyz[np.newaxis], root_ang_vel_world[np.newaxis])[0]
             future_base_yaw_vel.append(local_ang_vel[2:3])
             
@@ -581,6 +599,11 @@ class Controller:
         # imu_state quaternion: w, x, y, z
         quat = self.low_state.imu_state.quaternion
         ang_vel = np.array([self.low_state.imu_state.gyroscope], dtype=np.float32)
+        
+        # Normalize quaternion: ensure w is positive (canonical form)
+        # This is important because q and -q represent the same rotation
+        if quat[0] < 0:
+            quat = tuple(-x for x in quat)
 
         if self.config.imu_type == "torso":
             # h1 and h1_2 imu is on the torso
@@ -689,39 +712,46 @@ class Controller:
                 robot_quat_xyzw = np.array([quat[1], quat[2], quat[3], quat[0]], dtype=np.float32)
                 self._setup_init_frame(robot_quat_xyzw, motion_res)
             
-            # Extract data from motion library result
+            # Extract data from motion library result (original motion frame)
             next_root_pos = motion_res["root_pos"][0].numpy()  # (3,)
-            next_root_rot_xyzw = motion_res["root_rot"][0].numpy()  # (4,) XYZW format
-            next_root_vel_world = motion_res["root_vel"][0].numpy()  # (3,)
-            next_root_ang_vel_world = motion_res["root_ang_vel"][0].numpy()  # (3,)
+            next_root_rot_xyzw_orig = motion_res["root_rot"][0].numpy()  # (4,) XYZW format
+            next_root_vel_world_orig = motion_res["root_vel"][0].numpy()  # (3,)
+            next_root_ang_vel_world_orig = motion_res["root_ang_vel"][0].numpy()  # (3,)
             next_dof_pos = motion_res["dof_pos"][0].numpy()  # (23,)
-            ref_body_pos = motion_res["rg_pos_t"][0].numpy()  # (num_bodies, 3)
-            ref_body_rot = motion_res["rg_rot_t"][0].numpy()  # (num_bodies, 4) XYZW
+            ref_body_pos_orig = motion_res["rg_pos_t"][0].numpy()  # (num_bodies, 3)
+            ref_body_rot_orig = motion_res["rg_rot_t"][0].numpy()  # (num_bodies, 4) XYZW
             
-            # Root height
+            # Transform motion to robot frame (align motion heading to robot's initial heading)
+            next_root_rot_xyzw = self._ref_to_robot_frame_quat(next_root_rot_xyzw_orig)
+            next_root_vel_world = self._ref_to_robot_frame_vec(next_root_vel_world_orig)
+            next_root_ang_vel_world = self._ref_to_robot_frame_vec(next_root_ang_vel_world_orig)
+            
+            # Root height (unchanged - vertical position doesn't depend on yaw)
             next_root_height = next_root_pos[2:3]
             
-            # Convert quaternion XYZW to WXYZ for roll_pitch calculation
+            # Convert transformed quaternion XYZW to WXYZ for roll_pitch calculation
             next_root_rot_wxyz = next_root_rot_xyzw[[3, 0, 1, 2]]
             next_roll_pitch = self._quat_to_roll_pitch(next_root_rot_wxyz)
             
-            # Root velocity in local frame (use WXYZ for quat_rotate_inverse)
+            # Root velocity in local frame of transformed motion
             next_local_vel = quat_rotate_inverse(next_root_rot_wxyz[np.newaxis], next_root_vel_world[np.newaxis])[0]
             
-            # Root angular velocity yaw (local frame)
+            # Root angular velocity yaw (local frame of transformed motion)
             next_local_ang_vel = quat_rotate_inverse(next_root_rot_wxyz[np.newaxis], next_root_ang_vel_world[np.newaxis])[0]
             next_yaw_vel = next_local_ang_vel[2:3]
             
             # Compute local key body positions relative to anchor (root)
-            anchor_pos = ref_body_pos[self.anchor_index]  # (3,)
-            anchor_rot_xyzw = ref_body_rot[self.anchor_index]  # (4,) XYZW
+            # Transform anchor rotation to robot frame
+            anchor_pos = ref_body_pos_orig[self.anchor_index]  # (3,)
+            anchor_rot_xyzw_orig = ref_body_rot_orig[self.anchor_index]  # (4,) XYZW
+            anchor_rot_xyzw = self._ref_to_robot_frame_quat(anchor_rot_xyzw_orig)
             anchor_rot_wxyz = anchor_rot_xyzw[[3, 0, 1, 2]]
             
-            # Get key body positions and transform to local frame
-            key_body_pos_world = ref_body_pos[self.key_body_id]  # (9, 3)
+            # Get key body positions (relative positions are invariant to yaw rotation)
+            key_body_pos_world = ref_body_pos_orig[self.key_body_id]  # (9, 3)
             key_body_pos_relative = key_body_pos_world - anchor_pos  # (9, 3)
             
-            # Rotate to local frame using anchor inverse rotation
+            # Rotate to local frame using transformed anchor inverse rotation
             next_key_body_pos = quat_rotate_inverse(
                 np.tile(anchor_rot_wxyz, (len(self.key_body_id), 1)),
                 key_body_pos_relative
