@@ -13,19 +13,7 @@ robot:
   policy_obs_dim: -1 
   critic_obs_dim: -1
 
-  key_bodies: [ 
-    "left_knee_link",
-    "left_ankle_roll_link",
-    "right_knee_link",
-    "right_ankle_roll_link",
-    "left_elbow_link",
-    "right_elbow_link",
-    "left_hand_link",
-    "right_hand_link",
-    "head_link",
-    ]
-    
-  num_key_bodies: 9
+  key_bodies: ["left_ankle_roll_link", "right_ankle_roll_link"]
   contact_bodies: [ "left_ankle_roll_link", "right_ankle_roll_link" ]
   num_feet: 2
   right_foot_name: "right_ankle_roll_link"
@@ -134,92 +122,44 @@ robot:
     control_type: P
     # PD Drive parameters:
     stiffness: # [N*m/rad]
-      hip_yaw: 40.17923847137318
-      hip_roll: 99.09842777666113
-      hip_pitch: 40.17923847137318
-      knee: 99.09842777666113
-      ankle_pitch: 28.50124619574858
-      ankle_roll: 28.50124619574858
-      waist_yaw: 40.17923847137318
-      waist_roll: 28.50124619574858
-      waist_pitch: 28.50124619574858
-      shoulder_pitch: 14.25062309787429
-      shoulder_roll: 14.25062309787429
-      shoulder_yaw: 14.25062309787429
-      elbow: 14.25062309787429
-      wrist_roll: 14.25062309787429
-      wrist_pitch: 14.25062309787429
-      wrist_yaw: 14.25062309787429
+      hip_yaw: 100
+      hip_roll: 100
+      hip_pitch: 100
+      knee: 150
+      ankle_pitch: 40
+      ankle_roll: 40
+      waist_yaw: 400
+      waist_roll: 400
+      waist_pitch: 400
+      shoulder_pitch: 100
+      shoulder_roll: 100
+      shoulder_yaw: 50
+      elbow: 50
+      wrist_roll: 50
+      wrist_pitch: 50
+      wrist_yaw: 50
 
 
     damping: # [N*m/rad]  # [N*m*s/rad]
-      hip_yaw: 2.5578897650279457
-      hip_roll: 6.3088018534966395
-      hip_pitch: 2.5578897650279457
-      knee: 6.3088018534966395
-      ankle_pitch: 1.814445686584846
-      ankle_roll: 1.814445686584846
-      waist_yaw: 2.5578897650279457
-      waist_roll: 1.814445686584846
-      waist_pitch: 1.814445686584846
-      shoulder_pitch: 0.907222843292423
-      shoulder_roll: 0.907222843292423
-      shoulder_yaw: 0.907222843292423
-      elbow: 0.907222843292423
-      wrist_roll: 0.907222843292423
-      wrist_pitch: 0.907222843292423
-      wrist_yaw: 0.907222843292423
+      hip_yaw: 2.0
+      hip_roll: 2.0
+      hip_pitch: 2.0
+      knee: 4.0
+      ankle_pitch: 2.0
+      ankle_roll: 2.0
+      waist_yaw: 5.0
+      waist_roll: 5.0
+      waist_pitch: 5.0
+      shoulder_pitch: 2.0
+      shoulder_roll: 2.0
+      shoulder_yaw: 2.0
+      elbow: 2.0
+      wrist_roll: 2.0
+      wrist_pitch: 2.0
+      wrist_yaw: 2.0
 
     # action scale: target angle = actionScale * action + defaultAngle
-    action_scale: 
-      hip_yaw: 0.5475464652142303
-      hip_roll: 0.3506614663788243
-      hip_pitch: 0.5475464652142303
-      knee: 0.3506614663788243
-      ankle_pitch: 0.43857731392336724
-      ankle_roll: 0.43857731392336724
-      waist_roll: 0.43857731392336724
-      waist_pitch: 0.43857731392336724
-      waist_yaw: 0.5475464652142303
-      shoulder_pitch: 0.43857731392336724
-      shoulder_roll: 0.43857731392336724
-      shoulder_yaw: 0.43857731392336724
-      elbow: 0.43857731392336724
-      wrist_roll: 0.43857731392336724
-      wrist_pitch: 0.43857731392336724
-      wrist_yaw: 0.43857731392336724
-
-    dof_armature: 
-      left_hip_pitch_joint: 0.010177520
-      left_hip_roll_joint: 0.025101925
-      left_hip_yaw_joint: 0.010177520
-      left_knee_joint: 0.025101925
-      left_ankle_pitch_joint: 0.007219450
-      left_ankle_roll_joint: 0.007219450
-      right_hip_pitch_joint: 0.010177520
-      right_hip_roll_joint: 0.025101925
-      right_hip_yaw_joint: 0.010177520
-      right_knee_joint: 0.025101925
-      right_ankle_pitch_joint: 0.007219450
-      right_ankle_roll_joint: 0.007219450
-      waist_yaw_joint: 0.010177520
-      waist_roll_joint: 0.007219450
-      waist_pitch_joint: 0.007219450
-      left_shoulder_pitch_joint: 0.003609725
-      left_shoulder_roll_joint: 0.003609725
-      left_shoulder_yaw_joint: 0.003609725
-      left_elbow_joint: 0.003609725
-      right_shoulder_pitch_joint: 0.003609725
-      right_shoulder_roll_joint: 0.003609725
-      right_shoulder_yaw_joint: 0.003609725
-      right_elbow_joint: 0.003609725
-      left_wrist_roll_joint: 0.003609725
-      left_wrist_pitch_joint: 0.003609725
-      left_wrist_yaw_joint: 0.003609725
-      right_wrist_roll_joint: 0.003609725
-      right_wrist_pitch_joint: 0.003609725
-      right_wrist_yaw_joint: 0.003609725
-
+    action_scale: 0.25
     action_clip_value: 100.0
     clip_torques: True
 
@@ -228,7 +168,6 @@ robot:
     replace_cylinder_with_capsule: True
     flip_visual_attachments: False
     armature: 0.001 # isaacgym armature is set by this
-
     thickness: 0.01
     max_angular_velocity: 1000.
     max_linear_velocity: 1000.
@@ -236,10 +175,12 @@ robot:
     angular_damping: 0.
     linear_damping: 0.
 
+    # urdf_file: "g1/23dof_AMAH_I001.urdf" 
 
-    urdf_file: "g1/g1_29dof_rev_2.urdf"
+    urdf_file: "g1/${robot.asset.robot_type}.urdf"
     usd_file: "g1/${robot.asset.robot_type}.usd"
     xml_file: "g1/${robot.asset.robot_type}.xml"
+    # xml_file: "g1/${robot.asset.robot_type}_fitmotionONLY.xml"
     robot_type: g1_29dof
     self_collisions: 0 # 1 to disable, 0 to enable self collisions
     default_dof_drive_mode: 3
@@ -247,7 +188,7 @@ robot:
     fix_base_link: False # TEST: fix base link to world
 
   motion:
-    motion_lib_type: 'origin'
+    motion_lib_type: 'WJX'
     motion_file : ???
     asset:
       assetRoot: "description/robots/g1/"

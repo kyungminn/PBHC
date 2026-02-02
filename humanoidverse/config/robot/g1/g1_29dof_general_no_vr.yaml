@@ -20,8 +20,8 @@ robot:
     "right_ankle_roll_link",
     "left_elbow_link",
     "right_elbow_link",
-    "left_hand_link",
-    "right_hand_link",
+    "left_wrist_yaw_link",
+    "right_wrist_yaw_link",
     "head_link",
     ]
     
@@ -301,26 +301,13 @@ robot:
     left_foot_name: 'l_foot_roll'
 
 
-    nums_extend_bodies: 3
+    nums_extend_bodies: 1
     extend_config:
-      - joint_name: "left_hand_link"
-        parent_name: "left_elbow_link"
-        pos: [0.25, 0.0, 0.0]
-        rot: [1.0, 0.0, 0.0, 0.0] # w x y z
-      - joint_name: "right_hand_link"
-        parent_name: "right_elbow_link"
-        pos: [0.25, 0.0, 0.0]
-        rot: [1.0, 0.0, 0.0, 0.0] # w x y z
       - joint_name: "head_link"
         parent_name: "torso_link"
         pos: [0.0, 0.0, 0.42]
         rot: [1.0, 0.0, 0.0, 0.0] # w x y z
 
-
-    motion_tracking_link:
-      - "left_hand_link"
-      - "right_hand_link"
-      - "head_link"
 
     lower_body_link:
       - "pelvis"
@@ -355,8 +342,6 @@ robot:
       - "right_wrist_roll_link"
       - "right_wrist_pitch_link"
       - "right_wrist_yaw_link"
-      - "left_hand_link"
-      - "right_hand_link"
       - "head_link"
 
 
@@ -380,10 +365,10 @@ robot:
       - ["right_ankle_roll_link", "R_Ankle"]
       - ["left_shoulder_roll_link", "L_Shoulder"]
       - ["left_elbow_link", "L_Elbow"]
-      - ["left_hand_link", "L_Hand"]
+      - ["left_wrist_yaw_link", "L_Wrist_Yaw"]
       - ["right_shoulder_roll_link", "R_Shoulder"]
       - ["right_elbow_link", "R_Elbow"]
-      - ["right_hand_link", "R_Hand"]
+      - ["right_wrist_yaw_link", "R_Wrist_Yaw"]
       - ["head_link", "Head"]
 
 
@@ -427,8 +412,6 @@ robot:
       - [0.929, 0.867, 0.437] # right_wrist_roll_joint
       - [0.929, 0.867, 0.437] # right_wrist_pitch_joint
       - [0.929, 0.867, 0.437] # right_wrist_yaw_joint
-      - [0, 0.351, 0.613] # left_elbow_joint_extend
-      - [0, 0.351, 0.613] # right_elbow_joint_extend
       - [0, 0.351, 0.613] # head_link
 
 # Override motion lib default to use the adapted H1 variant

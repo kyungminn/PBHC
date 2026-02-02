@@ -206,6 +206,8 @@ class LeggedRobotMotionTracking(LeggedRobotBase):
         
         if "motion_tracking_link" in self.config.robot.motion:
             self.motion_tracking_id = [self.simulator._body_list.index(link) for link in self.config.robot.motion.motion_tracking_link]
+        else:
+            self.motion_tracking_id = []
         if "lower_body_link" in self.config.robot.motion:
             self.lower_body_id = [self.simulator._body_list.index(link) for link in self.config.robot.motion.lower_body_link]
         if "upper_body_link" in self.config.robot.motion:
@@ -218,28 +220,38 @@ class LeggedRobotMotionTracking(LeggedRobotBase):
     def _init_motion_extend(self):
         if "extend_config" in self.config.robot.motion:
             extend_parent_ids, extend_pos, extend_rot = [], [], []
-            for extend_config in self.config.robot.motion.extend_config:
-                extend_parent_ids.append(self.simulator._body_list.index(extend_config["parent_name"]))
-                # extend_parent_ids.append(self.simulator.find_rigid_body_indice(extend_config["parent_name"]))
-                extend_pos.append(extend_config["pos"])
-                extend_rot.append(extend_config["rot"])
-                self.simulator._body_list.append(extend_config["joint_name"])
-
-            self.extend_body_parent_ids = torch.tensor(extend_parent_ids, device=self.device, dtype=torch.long)
-            self.extend_body_pos_in_parent = torch.tensor(extend_pos).repeat(self.num_envs, 1, 1).to(self.device)
-            self.extend_body_rot_in_parent_wxyz = torch.tensor(extend_rot).repeat(self.num_envs, 1, 1).to(self.device)
-            self.extend_body_rot_in_parent_xyzw = self.extend_body_rot_in_parent_wxyz[:, :, [1, 2, 3, 0]]
-            self.num_extend_bodies = len(extend_parent_ids)
-
-            self.marker_coords = torch.zeros(self.num_envs, 
-                                         self.num_bodies + self.num_extend_bodies, 
-                                         3, 
-                                         dtype=torch.float, 
-                                         device=self.device, 
-                                         requires_grad=False) # extend
             
-            self.ref_body_pos_extend = torch.zeros(self.num_envs, self.num_bodies + self.num_extend_bodies, 3, dtype=torch.float, device=self.device, requires_grad=False)
-            self.dif_global_body_pos = torch.zeros(self.num_envs, self.num_bodies + self.num_extend_bodies, 3, dtype=torch.float, device=self.device, requires_grad=False)
+            # Check if extend_config is not empty
+            if self.config.robot.motion.extend_config:
+                for extend_config in self.config.robot.motion.extend_config:
+                    extend_parent_ids.append(self.simulator._body_list.index(extend_config["parent_name"]))
+                    # extend_parent_ids.append(self.simulator.find_rigid_body_indice(extend_config["parent_name"]))
+                    extend_pos.append(extend_config["pos"])
+                    extend_rot.append(extend_config["rot"])
+                    self.simulator._body_list.append(extend_config["joint_name"])
+
+            self.num_extend_bodies = len(extend_parent_ids)
+            
+            if self.num_extend_bodies > 0:
+                self.extend_body_parent_ids = torch.tensor(extend_parent_ids, device=self.device, dtype=torch.long)
+                self.extend_body_pos_in_parent = torch.tensor(extend_pos).repeat(self.num_envs, 1, 1).to(self.device)
+                self.extend_body_rot_in_parent_wxyz = torch.tensor(extend_rot).repeat(self.num_envs, 1, 1).to(self.device)
+                self.extend_body_rot_in_parent_xyzw = self.extend_body_rot_in_parent_wxyz[:, :, [1, 2, 3, 0]]
+            else:
+                self.extend_body_parent_ids = torch.tensor([], device=self.device, dtype=torch.long)
+                self.extend_body_pos_in_parent = torch.zeros(self.num_envs, 0, 3).to(self.device)
+                self.extend_body_rot_in_parent_wxyz = torch.zeros(self.num_envs, 0, 4).to(self.device)
+                self.extend_body_rot_in_parent_xyzw = torch.zeros(self.num_envs, 0, 4).to(self.device)
+
+        self.marker_coords = torch.zeros(self.num_envs, 
+                                     self.num_bodies + self.num_extend_bodies, 
+                                     3, 
+                                     dtype=torch.float, 
+                                     device=self.device, 
+                                     requires_grad=False) # extend
+        
+        self.ref_body_pos_extend = torch.zeros(self.num_envs, self.num_bodies + self.num_extend_bodies, 3, dtype=torch.float, device=self.device, requires_grad=False)
+        self.dif_global_body_pos = torch.zeros(self.num_envs, self.num_bodies + self.num_extend_bodies, 3, dtype=torch.float, device=self.device, requires_grad=False)
 
     def start_compute_metrics(self):
         self.compute_metrics = True
@@ -722,13 +734,17 @@ class LeggedRobotMotionTracking(LeggedRobotBase):
         
 
         ######################VR 3 point ########################
-        if not self.config.use_teleop_control:
-            ref_vr_3point_pos = ref_body_pos_extend.view(env_batch_size, -1, 3)[:, self.motion_tracking_id, :]
+        if len(self.motion_tracking_id) == 0:
+            # No VR tracking points, create zero observation
+            self._obs_vr_3point_pos = torch.zeros(env_batch_size, 0, device=self.device)
         else:
-            ref_vr_3point_pos = self.teleop_marker_coords
-        vr_2root_pos = (ref_vr_3point_pos - self.simulator.robot_root_states[:, 0:3].view(env_batch_size, 1, 3))
-        heading_inv_rot_vr = heading_inv_rot.repeat(3,1)
-        self._obs_vr_3point_pos = my_quat_rotate(heading_inv_rot_vr.view(-1, 4), vr_2root_pos.view(-1, 3)).view(env_batch_size, -1)
+            if not self.config.use_teleop_control:
+                ref_vr_3point_pos = ref_body_pos_extend.view(env_batch_size, -1, 3)[:, self.motion_tracking_id, :]
+            else:
+                ref_vr_3point_pos = self.teleop_marker_coords
+            vr_2root_pos = (ref_vr_3point_pos - self.simulator.robot_root_states[:, 0:3].view(env_batch_size, 1, 3))
+            heading_inv_rot_vr = heading_inv_rot.repeat(ref_vr_3point_pos.shape[1],1)
+            self._obs_vr_3point_pos = my_quat_rotate(heading_inv_rot_vr.view(-1, 4), vr_2root_pos.view(-1, 3)).view(env_batch_size, -1)
         
         
         
