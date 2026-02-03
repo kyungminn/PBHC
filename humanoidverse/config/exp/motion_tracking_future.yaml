@@ -1,0 +1,9 @@
+# @package _global_
+
+# Motion tracking with motion_encoder for future_motion_targets
+
+defaults:
+  - /algo: mh_ppo_motion
+  - /env: motion_tracking
+
+experiment_name: TEST_Motion_Tracking_Future

@@ -1,0 +1,91 @@
+# @package _global_
+
+# MHPPO with privileged encoder and history encoder support
+# Use with obs configs that have priv_obs and prop_history
+
+algo:
+  _target_: humanoidverse.agents.mh_ppo.mh_ppo_priv.MHPPOPriv
+  _recursive_: False
+  config:
+    num_learning_epochs: 5
+    num_mini_batches: 4
+    clip_param: 0.2
+    gamma: 0.99
+    lam: 0.95
+    value_loss_coef: 1.0
+    entropy_coef: 0.01
+    l2c2:
+      enable: False
+      lambda_value: 1.0
+      lambda_policy: 0.1
+
+    actor_learning_rate: 1.e-3
+    critic_learning_rate: 1.e-3
+    max_grad_norm: 1.0
+    use_clipped_value_loss: True
+    schedule: "adaptive"
+    desired_kl: 0.01
+
+    num_steps_per_env: 24
+    save_interval: 1000
+    logging_interval: 25
+
+    load_optimizer: True
+
+    init_noise_std: 0.8
+
+    num_learning_iterations: 1000000
+    init_at_random_ep_len: True
+    eval_callbacks: null
+
+    # Priv reg loss scheduling: [start_coef, end_coef, start_iter, ramp_iters]
+    priv_reg_coef_schedual: [0, 0.1, 2000, 3000]
+    
+    # Dagger update frequency for history encoder training
+    dagger_update_freq: 20
+
+    phase_embed:
+      type: Original
+      dim: 16
+
+    # Latent dimension for priv/history encoder (shared)
+    priv_latent_dim: 64
+
+    module_dict:
+      actor: 
+        # input_dim: actor_obs + priv_latent (or history_latent during inference)
+        input_dim: [actor_obs, "${algo.config.priv_latent_dim}"]
+        output_dim: [robot_action_dim]
+        layer_config:
+          type: MLP
+          hidden_dims: [512, 256, 128]
+          activation: ELU
+
+        # History encoder for prop_history (used during inference)
+        history_encoder:
+          tsteps: 10  # Should match obs.history_length if using history auxiliary
+          input_dim: [prop_history]
+          hidden_dim: 30
+          output_dim: "${algo.config.priv_latent_dim}"
+          layer_config:
+            type: Conv1d
+            activation: SiLU
+
+        # Priv encoder for priv_obs (used during training)
+        priv_encoder:
+          input_dim: [priv_obs]
+          output_dim: ["${algo.config.priv_latent_dim}"]  # List for BaseModule iteration
+          layer_config:
+            type: MLP
+            hidden_dims: [64]
+            activation: SiLU
+
+      critic: 
+        # input_dim: critic_obs + priv_latent
+        input_dim: [critic_obs, "${algo.config.priv_latent_dim}"]
+        output_dim: [num_rew_fn]
+        layer_config:
+          type: MLP
+          hidden_dims: [768, 512, 128]
+          activation: ELU
+

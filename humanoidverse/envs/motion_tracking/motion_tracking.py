@@ -10,10 +10,19 @@ from isaac_utils.rotations import (
     calc_heading_quat_inv,
     quat_mul,
     quat_rotate_inverse,
+    quat_inverse,
     xyzw_to_wxyz,
     wxyz_to_xyzw,
     get_euler_xyz_in_tensor,
+    calc_yaw_heading_quat_inv,
+    quat_conjugate,
+    quat_to_angle_axis,
     calc_yaw_heading_quat_inv
+)
+from humanoidverse.utils.torch_utils import (
+    matrix_from_quat,
+    yaw_quat,
+    quat_apply,
 )
 # from isaacgym import gymtorch, gymapi, gymutil
 from scipy.spatial.transform import Rotation as sRot
@@ -206,40 +215,57 @@ class LeggedRobotMotionTracking(LeggedRobotBase):
         
         if "motion_tracking_link" in self.config.robot.motion:
             self.motion_tracking_id = [self.simulator._body_list.index(link) for link in self.config.robot.motion.motion_tracking_link]
+        else:
+            self.motion_tracking_id = []
         if "lower_body_link" in self.config.robot.motion:
             self.lower_body_id = [self.simulator._body_list.index(link) for link in self.config.robot.motion.lower_body_link]
         if "upper_body_link" in self.config.robot.motion:
             self.upper_body_id = [self.simulator._body_list.index(link) for link in self.config.robot.motion.upper_body_link]
         if self.config.resample_motion_when_training:
             self.resample_time_interval = np.ceil(self.config.resample_time_interval_s / self.dt)
+        # For general_main rewards compatibility
+        if "key_bodies" in self.config.robot:
+            self.key_body_id = [self.simulator._body_list.index(link) for link in self.config.robot.key_bodies]
+        self.anchor_link = getattr(self.config.robot.motion, "anchor_link", "pelvis")
+        self.anchor_index = self.simulator.find_rigid_body_indice(self.anchor_link) + 1
             
         self.end_time_ratio_buf = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device, requires_grad=False)
         
     def _init_motion_extend(self):
         if "extend_config" in self.config.robot.motion:
             extend_parent_ids, extend_pos, extend_rot = [], [], []
-            for extend_config in self.config.robot.motion.extend_config:
-                extend_parent_ids.append(self.simulator._body_list.index(extend_config["parent_name"]))
-                # extend_parent_ids.append(self.simulator.find_rigid_body_indice(extend_config["parent_name"]))
-                extend_pos.append(extend_config["pos"])
-                extend_rot.append(extend_config["rot"])
-                self.simulator._body_list.append(extend_config["joint_name"])
-
-            self.extend_body_parent_ids = torch.tensor(extend_parent_ids, device=self.device, dtype=torch.long)
-            self.extend_body_pos_in_parent = torch.tensor(extend_pos).repeat(self.num_envs, 1, 1).to(self.device)
-            self.extend_body_rot_in_parent_wxyz = torch.tensor(extend_rot).repeat(self.num_envs, 1, 1).to(self.device)
-            self.extend_body_rot_in_parent_xyzw = self.extend_body_rot_in_parent_wxyz[:, :, [1, 2, 3, 0]]
-            self.num_extend_bodies = len(extend_parent_ids)
-
-            self.marker_coords = torch.zeros(self.num_envs, 
-                                         self.num_bodies + self.num_extend_bodies, 
-                                         3, 
-                                         dtype=torch.float, 
-                                         device=self.device, 
-                                         requires_grad=False) # extend
             
-            self.ref_body_pos_extend = torch.zeros(self.num_envs, self.num_bodies + self.num_extend_bodies, 3, dtype=torch.float, device=self.device, requires_grad=False)
-            self.dif_global_body_pos = torch.zeros(self.num_envs, self.num_bodies + self.num_extend_bodies, 3, dtype=torch.float, device=self.device, requires_grad=False)
+            # Check if extend_config is not empty
+            if self.config.robot.motion.extend_config:
+                for extend_config in self.config.robot.motion.extend_config:
+                    extend_parent_ids.append(self.simulator._body_list.index(extend_config["parent_name"]))
+                    # extend_parent_ids.append(self.simulator.find_rigid_body_indice(extend_config["parent_name"]))
+                    extend_pos.append(extend_config["pos"])
+                    extend_rot.append(extend_config["rot"])
+                    self.simulator._body_list.append(extend_config["joint_name"])
+
+            self.num_extend_bodies = len(extend_parent_ids)
+            
+            if self.num_extend_bodies > 0:
+                self.extend_body_parent_ids = torch.tensor(extend_parent_ids, device=self.device, dtype=torch.long)
+                self.extend_body_pos_in_parent = torch.tensor(extend_pos).repeat(self.num_envs, 1, 1).to(self.device)
+                self.extend_body_rot_in_parent_wxyz = torch.tensor(extend_rot).repeat(self.num_envs, 1, 1).to(self.device)
+                self.extend_body_rot_in_parent_xyzw = self.extend_body_rot_in_parent_wxyz[:, :, [1, 2, 3, 0]]
+            else:
+                self.extend_body_parent_ids = torch.tensor([], device=self.device, dtype=torch.long)
+                self.extend_body_pos_in_parent = torch.zeros(self.num_envs, 0, 3).to(self.device)
+                self.extend_body_rot_in_parent_wxyz = torch.zeros(self.num_envs, 0, 4).to(self.device)
+                self.extend_body_rot_in_parent_xyzw = torch.zeros(self.num_envs, 0, 4).to(self.device)
+
+        self.marker_coords = torch.zeros(self.num_envs, 
+                                        self.num_bodies + self.num_extend_bodies, 
+                                        3, 
+                                        dtype=torch.float, 
+                                        device=self.device, 
+                                        requires_grad=False) # extend
+        
+        self.ref_body_pos_extend = torch.zeros(self.num_envs, self.num_bodies + self.num_extend_bodies, 3, dtype=torch.float, device=self.device, requires_grad=False)
+        self.dif_global_body_pos = torch.zeros(self.num_envs, self.num_bodies + self.num_extend_bodies, 3, dtype=torch.float, device=self.device, requires_grad=False)
 
     def start_compute_metrics(self):
         self.compute_metrics = True
@@ -578,6 +604,150 @@ class LeggedRobotMotionTracking(LeggedRobotBase):
         self._kick_motion_res_multiplestep_buffer = {k: torch.cat(v, dim=1) for k, v in buffer.items()}  # Dict[str, Tensor[B, T, D]]
         return self._kick_motion_res_multiplestep_buffer
 
+    def _get_future_motion_targets(self):
+        """Compute future motion targets for motion_encoder (similar to general_tracking)
+        Note: Motion lib's FakeCat indexer only supports fixed batch size, so we loop through timesteps.
+        """
+        self.tar_obs_steps = torch.linspace(
+            start=1,
+            end=self.config.obs.future_max_steps,
+            steps=self.config.obs.future_num_steps,
+            device=self.device,
+            dtype=torch.long,
+        )
+
+        num_steps = self.tar_obs_steps.numel()
+        B = self.num_envs
+
+        motion_times = (self.episode_length_buf) * self.dt + self.motion_start_times
+        
+        # Collect results for each timestep (motion_lib only supports batch dimension = num_envs)
+        all_root_rot = []
+        all_root_pos = []
+        all_root_vel = []
+        all_root_ang_vel = []
+        all_dof_pos = []
+        all_ref_body_pos = []
+        all_ref_body_rot = []
+        
+        for step_idx in range(num_steps):
+            step_offset = self.tar_obs_steps[step_idx].item()
+            obs_motion_time = step_offset * self.dt + motion_times  # (B,)
+            motion_res = self._motion_lib.get_motion_state(self.motion_ids, obs_motion_time, self.env_origins)
+            
+            all_root_rot.append(motion_res["root_rot"])
+            all_root_pos.append(motion_res["root_pos"])
+            all_root_vel.append(motion_res["root_vel"])
+            all_root_ang_vel.append(motion_res["root_ang_vel"])
+            all_dof_pos.append(motion_res["dof_pos"])
+            all_ref_body_pos.append(motion_res["rg_pos_t"])
+            all_ref_body_rot.append(motion_res["rg_rot_t"])
+        
+        # Stack results: (B, num_steps, ...)
+        root_rot = torch.stack(all_root_rot, dim=1)  # (B, num_steps, 4)
+        root_pos = torch.stack(all_root_pos, dim=1)  # (B, num_steps, 3)
+        root_vel = torch.stack(all_root_vel, dim=1)  # (B, num_steps, 3)
+        root_ang_vel = torch.stack(all_root_ang_vel, dim=1)  # (B, num_steps, 3)
+        dof_pos = torch.stack(all_dof_pos, dim=1)  # (B, num_steps, dof_size)
+        ref_body_pos_extend = torch.stack(all_ref_body_pos, dim=1)  # (B, num_steps, num_bodies, 3)
+        ref_body_rot_extend = torch.stack(all_ref_body_rot, dim=1)  # (B, num_steps, num_bodies, 4)
+
+        flat_root_rot = root_rot.reshape(B * num_steps, 4)
+        flat_root_vel = root_vel.reshape(B * num_steps, 3)
+        flat_root_ang_vel = root_ang_vel.reshape(B * num_steps, 3)
+        rpy = get_euler_xyz_in_tensor(flat_root_rot)
+        roll_pitch = rpy[:, :2].reshape(B, num_steps, 2)
+
+        root_vel_local = quat_rotate_inverse(flat_root_rot, flat_root_vel, w_last=True).view(B, num_steps, 3)
+        root_ang_vel_local = quat_rotate_inverse(flat_root_rot, flat_root_ang_vel, w_last=True).view(B, num_steps, 3)
+
+        # Compute local key body positions for future motion
+        num_rigid_bodies = self.simulator._rigid_body_pos.shape[1]
+        robot_anchor_pos_w_repeat = ref_body_pos_extend[..., self.anchor_index, :][..., None, :].repeat(
+            1, 1, num_rigid_bodies + self.num_extend_bodies, 1
+        )
+        robot_anchor_quat_w_repeat = ref_body_rot_extend[..., self.anchor_index, :][..., None, :].repeat(
+            1, 1, num_rigid_bodies + self.num_extend_bodies, 1
+        )
+        local_ref_key_body_pos = quat_apply(
+            quat_inverse(robot_anchor_quat_w_repeat, w_last=True),
+            ref_body_pos_extend - robot_anchor_pos_w_repeat,
+        )[..., self.key_body_id, :].reshape(B, num_steps, -1)
+
+        # Store computed future motion observations
+        self.obs_future_motion_root_height = root_pos[..., 2:3].reshape(B, -1)
+        self.obs_future_motion_roll_pitch = roll_pitch.reshape(B, -1)
+        self.obs_future_motion_base_lin_vel = root_vel_local.reshape(B, -1)
+        self.obs_future_motion_base_yaw_vel = root_ang_vel_local[..., 2:3].reshape(B, -1)
+        self.obs_future_motion_base_ang_vel = root_ang_vel_local.reshape(B, -1)
+        self.obs_future_motion_dof_pos = dof_pos.reshape(B, -1)
+        self.obs_future_motion_local_ref_key_body_pos = local_ref_key_body_pos.reshape(B, -1)
+        
+        # Compute next step reference motion (first timestep of future motion)
+        self.obs_next_step_mimic_buf = torch.cat(
+            (
+                root_pos[:, 0, 2:3],
+                roll_pitch[:, 0, :],
+                root_vel_local[:, 0, :],
+                root_ang_vel_local[:, 0, 2:3],
+                dof_pos[:, 0, :],
+                local_ref_key_body_pos[:, 0, :],
+            ),
+            dim=-1,
+        )
+    
+    def _compute_next_step_ref_motion(self):
+        """Compute next step reference motion without full future motion targets.
+        Used when next_step_ref_motion is needed but future_motion_targets is not in obs_dict.
+        """
+        # Safety check: ensure key_body_id and anchor_index are initialized
+        if not hasattr(self, 'key_body_id') or not hasattr(self, 'anchor_index'):
+            logger.warning("key_body_id or anchor_index not initialized. Skipping next_step_ref_motion computation.")
+            self.obs_next_step_mimic_buf = torch.zeros(self.num_envs, 1, device=self.device)
+            return
+        
+        B = self.num_envs
+        motion_times = (self.episode_length_buf + 1) * self.dt + self.motion_start_times
+        motion_res = self._motion_lib.get_motion_state(self.motion_ids, motion_times, self.env_origins)
+        
+        root_pos = motion_res["root_pos"]
+        root_rot = motion_res["root_rot"]
+        root_vel = motion_res["root_vel"]
+        root_ang_vel = motion_res["root_ang_vel"]
+        dof_pos = motion_res["dof_pos"]
+        ref_body_pos_extend = motion_res["rg_pos_t"]
+        ref_body_rot_extend = motion_res["rg_rot_t"]
+        
+        # Convert to local frame
+        rpy = get_euler_xyz_in_tensor(root_rot)
+        roll_pitch = rpy[:, :2]
+        root_vel_local = quat_rotate_inverse(root_rot, root_vel, w_last=True)
+        root_ang_vel_local = quat_rotate_inverse(root_rot, root_ang_vel, w_last=True)
+        
+        # Compute local key body positions
+        num_rigid_bodies = self.simulator._rigid_body_pos.shape[1]
+        robot_anchor_pos_w_repeat = ref_body_pos_extend[:, self.anchor_index, :][:, None, :].repeat(
+            1, num_rigid_bodies + self.num_extend_bodies, 1
+        )
+        robot_anchor_quat_w_repeat = ref_body_rot_extend[:, self.anchor_index, :][:, None, :].repeat(
+            1, num_rigid_bodies + self.num_extend_bodies, 1
+        )
+        local_ref_key_body_pos = quat_apply(
+            quat_inverse(robot_anchor_quat_w_repeat, w_last=True),
+            ref_body_pos_extend - robot_anchor_pos_w_repeat,
+        )[:, self.key_body_id, :].reshape(B, -1)
+        
+        self.obs_next_step_mimic_buf = torch.cat(
+            (
+                root_pos[:, 2:3],
+                roll_pitch,
+                root_vel_local,
+                root_ang_vel_local[:, 2:3],
+                dof_pos,
+                local_ref_key_body_pos,
+            ),
+            dim=-1,
+        )
 
     # TimePortion: <12%
     def _pre_compute_observations_callback(self):
@@ -602,6 +772,14 @@ class LeggedRobotMotionTracking(LeggedRobotBase):
             
                 # (Pdb) print( [(k,v.shape) for k,v in motion_res.items()  ]  )
                 # [('root_pos', torch.Size([1, 3])), ('root_rot', torch.Size([1, 4])), ('dof_pos', torch.Size([1, 23])), ('root_vel', torch.Size([1, 3])), ('root_ang_vel', torch.Size([1, 3])), ('dof_vel', torch.Size([1, 23])), ('motion_aa', torch.Size([1, 72])), ('motion_bodies', torch.Size([1, 17])), ('rg_pos', torch.Size([1, 24, 3])), ('rb_rot', torch.Size([1, 24, 4])), ('body_vel', torch.Size([1, 24, 3])), ('body_ang_vel', torch.Size([1, 24, 3])), ('rg_pos_t', torch.Size([1, 27, 3])), ('rg_rot_t', torch.Size([1, 27, 4])), ('body_vel_t', torch.Size([1, 27, 3])), ('body_ang_vel_t', torch.Size([1, 27, 3]))]
+        
+        # Compute future motion targets for motion_encoder (when future_motion_targets is in obs)
+        if "future_motion_targets" in self.config.obs.obs_dict:
+            self._get_future_motion_targets()
+        # Compute next step ref motion if needed (but future_motion_targets not in obs_dict)
+        elif any("next_step_ref_motion" in obs_list for obs_list in self.config.obs.obs_dict.values()):
+            self._compute_next_step_ref_motion()
+            
         if self._motion_lib.has_contact_mask:
             self.ref_contact_mask = motion_res["contact_mask"]
             
@@ -647,8 +825,9 @@ class LeggedRobotMotionTracking(LeggedRobotBase):
         ## diff compute - kinematic position
         self.dif_global_body_pos = ref_body_pos_extend - self._rigid_body_pos_extend
         # import ipdb; ipdb.set_trace()
-        ## diff compute - kinematic rotation
+        ## diff compute - kinematic rotation (quaternion difference for general_main rewards)
         self.dif_global_body_rot = ref_body_rot_extend - self._rigid_body_rot_extend
+
         ## diff compute - kinematic velocity
         self.dif_global_body_vel = ref_body_vel_extend - self._rigid_body_vel_extend
         ## diff compute - kinematic angular velocity
@@ -656,7 +835,76 @@ class LeggedRobotMotionTracking(LeggedRobotBase):
         self.dif_global_body_ang_vel = ref_body_ang_vel_extend - self._rigid_body_ang_vel_extend
         # ang_vel_reward = self._reward_teleop_body_ang_velocity_extend()
 
+        ## diff compute - localize root velocity (for teleop_root_vel reward)
+        ref_root_vel = motion_res["root_vel"]
+        ref_root_rot = motion_res["root_rot"]
+        ref_root_pos = motion_res["root_pos"]
+        ref_root_vel_local = quat_rotate_inverse(ref_root_rot.view(self.num_envs, 4), ref_root_vel.view(self.num_envs, 3), w_last=True).view(self.num_envs, 3)
+        self.dif_root_velocity = ref_root_vel_local - self.base_lin_vel
+        
+        ## diff compute - anchor body position (for teleop_anchor_body_position reward)
+        self.dif_anchor_body_pos = self.dif_global_body_pos[:, self.anchor_index, :]
 
+        ##### beyondmimic style local tracking (for local_key_body_position/rotation rewards) #####
+        num_rigid_bodies = self.simulator._rigid_body_pos.shape[1]
+        anchor_pos_w_repeat = ref_body_pos_extend[:, self.anchor_index, :][:, None, :].repeat(1, num_rigid_bodies + self.num_extend_bodies, 1)
+        anchor_quat_w_repeat = ref_body_rot_extend[:, self.anchor_index, :][:, None, :].repeat(1, num_rigid_bodies + self.num_extend_bodies, 1)
+        robot_anchor_pos_w_repeat = self._rigid_body_pos_extend[:, self.anchor_index, :][:, None, :].repeat(
+            1, num_rigid_bodies + self.num_extend_bodies, 1
+        )
+        robot_anchor_quat_w_repeat = self._rigid_body_rot_extend[:, self.anchor_index, :][:, None, :].repeat(
+            1, num_rigid_bodies + self.num_extend_bodies, 1
+        )
+
+        delta_pos_w = robot_anchor_pos_w_repeat.clone()
+        delta_pos_w[..., 2] = anchor_pos_w_repeat[..., 2]
+
+        delta_ori_w = yaw_quat(
+            quat_mul(
+                robot_anchor_quat_w_repeat,
+                quat_inverse(anchor_quat_w_repeat, w_last=True),
+                w_last=True,
+            ),
+            w_last=True,
+        )
+        self.body_pos_relative_w = delta_pos_w + quat_apply(delta_ori_w, ref_body_pos_extend - anchor_pos_w_repeat)
+        self.body_quat_relative_w = quat_mul(delta_ori_w, ref_body_rot_extend, w_last=True)
+
+        self.dif_local_body_pos = self.body_pos_relative_w - self._rigid_body_pos_extend
+        self.dif_local_body_rot = quat_mul(
+            self.body_quat_relative_w,
+            quat_conjugate(self._rigid_body_rot_extend, w_last=True),
+            w_last=True,
+        )
+
+        # Compute observations for local body positions and rotations (in robot anchor frame)
+        self._obs_local_body_rot = matrix_from_quat(
+            quat_mul(
+                quat_inverse(robot_anchor_quat_w_repeat, w_last=True),
+                self._rigid_body_rot_extend,
+                w_last=True,
+            ),
+            w_last=True,
+        )[..., :2]
+        self._obs_local_body_pos = quat_apply(
+            quat_inverse(robot_anchor_quat_w_repeat, w_last=True),
+            self._rigid_body_pos_extend - robot_anchor_pos_w_repeat,
+        )
+
+        # Compute anchor reference observations (reference anchor in robot anchor frame)
+        self._obs_anchor_ref_rot = matrix_from_quat(
+            quat_mul(
+                quat_inverse(self._rigid_body_rot_extend[:, self.anchor_index, :], w_last=True),
+                ref_body_rot_extend[:, self.anchor_index, :],
+                w_last=True,
+            ),
+            w_last=True,
+        )[..., :2]
+
+        self._obs_anchor_ref_pos = quat_apply(
+            quat_inverse(self._rigid_body_rot_extend[:, self.anchor_index, :], w_last=True),
+            ref_body_pos_extend[:, self.anchor_index, :] - self._rigid_body_pos_extend[:, self.anchor_index, :],
+        )
 
         
         ## diff compute - kinematic joint position
@@ -722,13 +970,17 @@ class LeggedRobotMotionTracking(LeggedRobotBase):
         
 
         ######################VR 3 point ########################
-        if not self.config.use_teleop_control:
-            ref_vr_3point_pos = ref_body_pos_extend.view(env_batch_size, -1, 3)[:, self.motion_tracking_id, :]
+        if len(self.motion_tracking_id) == 0:
+            # No VR tracking points, create zero observation
+            self._obs_vr_3point_pos = torch.zeros(env_batch_size, 0, device=self.device)
         else:
-            ref_vr_3point_pos = self.teleop_marker_coords
-        vr_2root_pos = (ref_vr_3point_pos - self.simulator.robot_root_states[:, 0:3].view(env_batch_size, 1, 3))
-        heading_inv_rot_vr = heading_inv_rot.repeat(3,1)
-        self._obs_vr_3point_pos = my_quat_rotate(heading_inv_rot_vr.view(-1, 4), vr_2root_pos.view(-1, 3)).view(env_batch_size, -1)
+            if not self.config.use_teleop_control:
+                ref_vr_3point_pos = ref_body_pos_extend.view(env_batch_size, -1, 3)[:, self.motion_tracking_id, :]
+            else:
+                ref_vr_3point_pos = self.teleop_marker_coords
+            vr_2root_pos = (ref_vr_3point_pos - self.simulator.robot_root_states[:, 0:3].view(env_batch_size, 1, 3))
+            heading_inv_rot_vr = heading_inv_rot.repeat(3,1)
+            self._obs_vr_3point_pos = my_quat_rotate(heading_inv_rot_vr.view(-1, 4), vr_2root_pos.view(-1, 3)).view(env_batch_size, -1)
         
         
         
@@ -988,6 +1240,43 @@ class LeggedRobotMotionTracking(LeggedRobotBase):
 
     def _get_obs_future_ref_dof_vel(self):
         return self._obs_future_ref_dof_vel
+
+    # Future motion observation getters (for motion_encoder)
+    def _get_obs_future_motion_root_height(self):
+        return self.obs_future_motion_root_height
+
+    def _get_obs_future_motion_roll_pitch(self):
+        return self.obs_future_motion_roll_pitch
+
+    def _get_obs_future_motion_base_lin_vel(self):
+        return self.obs_future_motion_base_lin_vel
+
+    def _get_obs_future_motion_base_ang_vel(self):
+        return self.obs_future_motion_base_ang_vel
+
+    def _get_obs_future_motion_base_yaw_vel(self):
+        return self.obs_future_motion_base_yaw_vel
+
+    def _get_obs_future_motion_dof_pos(self):
+        return self.obs_future_motion_dof_pos
+
+    def _get_obs_future_motion_local_ref_key_body_pos(self):
+        return self.obs_future_motion_local_ref_key_body_pos
+
+    def _get_obs_next_step_ref_motion(self):
+        return self.obs_next_step_mimic_buf
+
+    def _get_obs_local_key_body_pos(self):
+        return self._obs_local_body_pos[:, self.key_body_id, ...].view(self.num_envs, -1)
+
+    def _get_obs_local_key_body_rot(self):
+        return self._obs_local_body_rot[:, self.key_body_id, ...].reshape(self.num_envs, -1)
+
+    def _get_obs_anchor_ref_pos(self):
+        return self._obs_anchor_ref_pos.view(self.num_envs, -1)
+
+    def _get_obs_anchor_ref_rot(self):
+        return self._obs_anchor_ref_rot.reshape(self.num_envs, -1)
 
     ######################### Observations #########################
     def _get_obs_history_actor(self,):
@@ -1290,6 +1579,61 @@ class LeggedRobotMotionTracking(LeggedRobotBase):
         
         potential_velocity = radial_velocity_potential(cur_velocity, ref_velocity)
         return potential_velocity
+
+    # ============ Rewards from general_tracking for general_main.yaml compatibility ============
+    
+    def _reward_teleop_root_vel(self):
+        root_vel_diff = self.dif_root_velocity
+        diff_root_vel_dist = (root_vel_diff**2).mean(dim=-1)
+        r_root_vel = torch.exp(-diff_root_vel_dist / self.config.rewards.reward_tracking_sigma.teleop_root_vel)
+
+        self._update_adaptive_sigma(diff_root_vel_dist, "teleop_root_vel")
+        return r_root_vel
+
+    def _reward_teleop_anchor_body_position(self):
+        key_body_diff = self.dif_anchor_body_pos
+        diff_body_pos_dist = (key_body_diff**2).mean(dim=-1)
+        r_body_pos = torch.exp(-diff_body_pos_dist / self.config.rewards.reward_tracking_sigma.teleop_anchor_body_pos)
+        self._update_adaptive_sigma(diff_body_pos_dist, "teleop_anchor_body_pos")
+        return r_body_pos
+
+    def _reward_teleop_anchor_body_rotation(self):
+        rotation_diff = quat_to_angle_axis(self.dif_global_body_rot)[0][:, self.anchor_index]
+        diff_body_rot_dist = rotation_diff**2
+        r_body_rot = torch.exp(-diff_body_rot_dist / self.config.rewards.reward_tracking_sigma.teleop_anchor_body_rot)
+
+        self._update_adaptive_sigma(diff_body_rot_dist, "teleop_anchor_body_rot")
+        return r_body_rot
+
+    def _reward_local_key_body_position(self):
+        key_body_diff = self.dif_local_body_pos[:, self.key_body_id, :]
+        diff_body_pos_dist = (key_body_diff**2).mean(dim=-1).mean(dim=-1)
+        r_body_pos = torch.exp(-diff_body_pos_dist / self.config.rewards.reward_tracking_sigma.local_key_body_pos)
+        self._update_adaptive_sigma(diff_body_pos_dist, "local_key_body_pos")
+        return r_body_pos
+
+    def _reward_local_key_body_rotation(self):
+        rotation_diff = quat_to_angle_axis(self.dif_local_body_rot)[0][:, self.key_body_id]
+        diff_body_rot_dist = (rotation_diff**2).mean(dim=-1)
+        r_body_rot = torch.exp(-diff_body_rot_dist / self.config.rewards.reward_tracking_sigma.local_key_body_rot)
+        self._update_adaptive_sigma(diff_body_rot_dist, "local_key_body_rot")
+        return r_body_rot
+
+    def _reward_key_body_velocity(self):
+        velocity_diff = self.dif_global_body_vel[:, self.key_body_id, :]
+        diff_body_vel_dist = (velocity_diff**2).mean(dim=-1).mean(dim=-1)
+        r_body_vel = torch.exp(-diff_body_vel_dist / self.config.rewards.reward_tracking_sigma.key_body_vel)
+
+        self._update_adaptive_sigma(diff_body_vel_dist, "key_body_vel")
+        return r_body_vel
+
+    def _reward_key_body_ang_velocity(self):
+        ang_velocity_diff = self.dif_global_body_ang_vel[:, self.key_body_id, :]
+        diff_body_ang_vel_dist = (ang_velocity_diff**2).mean(dim=-1).mean(dim=-1)
+        r_body_ang_vel = torch.exp(-diff_body_ang_vel_dist / self.config.rewards.reward_tracking_sigma.key_body_ang_vel)
+
+        self._update_adaptive_sigma(diff_body_ang_vel_dist, "key_body_ang_vel")
+        return r_body_ang_vel
     
     def setup_visualize_entities(self):
         if self.debug_viz and self.config.simulator.config.name == "genesis":

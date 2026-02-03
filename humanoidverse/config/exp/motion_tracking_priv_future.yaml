@@ -1,0 +1,9 @@
+# @package _global_
+
+# Motion tracking with both privileged/history encoding and future motion encoding
+
+defaults:
+  - /algo: mh_ppo_priv_with_motion
+  - /env: motion_tracking
+
+experiment_name: TEST_Motion_Tracking_Priv_Future

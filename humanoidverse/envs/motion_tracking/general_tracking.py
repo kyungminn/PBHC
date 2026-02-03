@@ -16,6 +16,11 @@ from isaac_utils.rotations import (
     xyzw_to_wxyz,
 )
 from loguru import logger
+from pathlib import Path
+import os
+import joblib
+from scipy.spatial.transform import Rotation as sRot
+from termcolor import colored
 
 from humanoidverse.envs.legged_base_task.legged_robot_base import LeggedRobotBase
 from humanoidverse.utils.torch_utils import (
@@ -38,6 +43,8 @@ class LeggedRobotGeneralTracking(LeggedRobotBase):
 
         self.init_done = True
         self.debug_viz = True
+
+        self._init_save_motion()
 
         if self.config.termination.terminate_when_motion_far and self.config.termination_curriculum.terminate_when_motion_far_curriculum:
             self.terminate_when_motion_far_threshold = self.config.termination_curriculum.terminate_when_motion_far_initial_threshold
@@ -86,6 +93,8 @@ class LeggedRobotGeneralTracking(LeggedRobotBase):
     def _init_tracking_config(self):
         if "motion_tracking_link" in self.config.robot.motion:
             self.motion_tracking_id = [self.simulator._body_list.index(link) for link in self.config.robot.motion.motion_tracking_link]
+        else:
+            self.motion_tracking_id = []
         if "lower_body_link" in self.config.robot.motion:
             self.lower_body_id = [self.simulator._body_list.index(link) for link in self.config.robot.motion.lower_body_link]
         if "upper_body_link" in self.config.robot.motion:
@@ -98,70 +107,111 @@ class LeggedRobotGeneralTracking(LeggedRobotBase):
         self.anchor_index = self.simulator.find_rigid_body_indice(self.anchor_link) + 1
         # self.end_time_ratio_buf = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device, requires_grad=False)
 
+    def _init_save_motion(self):
+        if "save_motion" in self.config:
+            print(f"DEBUG: {self.motion_len[0]=}")
+            print(f"DEBUG: {self.dt=}")
+            print(f"DEBUG: {self.motion_len[0]/self.dt=}")
+            self._motion_episode_length = torch.ceil((self.motion_len/self.dt)[0]).int()
+            assert (self._motion_episode_length- self.motion_len[0]/self.dt).norm() <1, f"Motion length {self.motion_len} is not divisible by motion dt {self.dt}, {self._motion_episode_length=}, {(self._motion_episode_length- self.motion_len[0]/self.dt).norm()=}"
+            assert self._motion_episode_length > 0, f"Motion length {self.motion_len} is not positive"
+            
+            self.save_motion = self.config.save_motion
+            if self.save_motion:
+                os.makedirs(Path(self.config.ckpt_dir) / "motions", exist_ok = True)
+
+                
+                if hasattr(self.config, 'dump_motion_name'):
+                    raise NotImplementedError
+                    self.save_motion_dir = Path(self.config.ckpt_dir) / "motions" / (str(self.config.eval_timestamp) + "_" + self.config.dump_motion_name)
+                else:
+                    self.save_motion_dir = Path(self.config.ckpt_dir) / "motions" / f"{self.config.save_note}_{self.config.eval_timestamp}"
+                self.save_motion = True
+                self.num_augment_joint = len(self.config.robot.motion.extend_config)
+                self.motions_for_saving = {'root_trans_offset':[], 'pose_aa':[], 'dof':[], 'root_rot':[], 'actor_obs':[], 'action':[], 'terminate':[],
+                                            'root_lin_vel':[], 'root_ang_vel':[], 'dof_vel':[],'contact_mask':[]}
+                self.motion_times_buf = []
+                self.start_save = False
+                
+                self._write_to_file = True
+
+        else:
+            self.save_motion = False
+
     def _init_motion_extend(self):
         if "extend_config" in self.config.robot.motion:
             extend_parent_ids, extend_pos, extend_rot = [], [], []
-            for extend_config in self.config.robot.motion.extend_config:
-                extend_parent_ids.append(self.simulator._body_list.index(extend_config["parent_name"]))
-                # extend_parent_ids.append(self.simulator.find_rigid_body_indice(extend_config["parent_name"]))
-                extend_pos.append(extend_config["pos"])
-                extend_rot.append(extend_config["rot"])
-                self.simulator._body_list.append(extend_config["joint_name"])
+            
+            # Check if extend_config is not empty
+            if self.config.robot.motion.extend_config:
+                for extend_config in self.config.robot.motion.extend_config:
+                    extend_parent_ids.append(self.simulator._body_list.index(extend_config["parent_name"]))
+                    # extend_parent_ids.append(self.simulator.find_rigid_body_indice(extend_config["parent_name"]))
+                    extend_pos.append(extend_config["pos"])
+                    extend_rot.append(extend_config["rot"])
+                    self.simulator._body_list.append(extend_config["joint_name"])
 
-            self.extend_body_parent_ids = torch.tensor(extend_parent_ids, device=self.device, dtype=torch.long)
-            self.extend_body_pos_in_parent = torch.tensor(extend_pos).repeat(self.num_envs, 1, 1).to(self.device)
-            self.extend_body_rot_in_parent_wxyz = torch.tensor(extend_rot).repeat(self.num_envs, 1, 1).to(self.device)
-            self.extend_body_rot_in_parent_xyzw = self.extend_body_rot_in_parent_wxyz[:, :, [1, 2, 3, 0]]
             self.num_extend_bodies = len(extend_parent_ids)
-            self.num_key_bodies = len(self.config.robot.key_bodies)
-            self.marker_coords = torch.zeros(
-                self.num_envs,
-                self.num_bodies + self.num_extend_bodies,
-                3,
-                dtype=torch.float,
-                device=self.device,
-                requires_grad=False,
-            )  # extend
-            self.key_body_coords = torch.zeros(
-                self.num_envs,
-                self.num_key_bodies,
-                3,
-                dtype=torch.float,
-                device=self.device,
-                requires_grad=False,
-            )  # num_key_bodies
-            self.local_key_body_coords = torch.zeros(
-                self.num_envs,
-                self.num_key_bodies,
-                3,
-                dtype=torch.float,
-                device=self.device,
-                requires_grad=False,
-            )  # num_key_bodies
-            self.ref_body_pos_extend = torch.zeros(
-                self.num_envs,
-                self.num_bodies + self.num_extend_bodies,
-                3,
-                dtype=torch.float,
-                device=self.device,
-                requires_grad=False,
-            )
-            self.dif_global_body_pos = torch.zeros(
-                self.num_envs,
-                self.num_bodies + self.num_extend_bodies,
-                3,
-                dtype=torch.float,
-                device=self.device,
-                requires_grad=False,
-            )
-            self.dif_local_body_pos = torch.zeros(
-                self.num_envs,
-                self.num_bodies + self.num_extend_bodies,
-                3,
-                dtype=torch.float,
-                device=self.device,
-                requires_grad=False,
-            )
+            
+            if self.num_extend_bodies > 0:
+                self.extend_body_parent_ids = torch.tensor(extend_parent_ids, device=self.device, dtype=torch.long)
+                self.extend_body_pos_in_parent = torch.tensor(extend_pos).repeat(self.num_envs, 1, 1).to(self.device)
+                self.extend_body_rot_in_parent_wxyz = torch.tensor(extend_rot).repeat(self.num_envs, 1, 1).to(self.device)
+                self.extend_body_rot_in_parent_xyzw = self.extend_body_rot_in_parent_wxyz[:, :, [1, 2, 3, 0]]
+            else:
+                self.extend_body_parent_ids = torch.tensor([], device=self.device, dtype=torch.long)
+                self.extend_body_pos_in_parent = torch.zeros(self.num_envs, 0, 3).to(self.device)
+                self.extend_body_rot_in_parent_wxyz = torch.zeros(self.num_envs, 0, 4).to(self.device)
+                self.extend_body_rot_in_parent_xyzw = torch.zeros(self.num_envs, 0, 4).to(self.device)            
+        self.num_key_bodies = len(self.config.robot.key_bodies)
+        self.marker_coords = torch.zeros(
+            self.num_envs,
+            self.num_bodies + self.num_extend_bodies,
+            3,
+            dtype=torch.float,
+            device=self.device,
+            requires_grad=False,
+        )  # extend
+        self.key_body_coords = torch.zeros(
+            self.num_envs,
+            self.num_key_bodies,
+            3,
+            dtype=torch.float,
+            device=self.device,
+            requires_grad=False,
+        )  # num_key_bodies
+        self.local_key_body_coords = torch.zeros(
+            self.num_envs,
+            self.num_key_bodies,
+            3,
+            dtype=torch.float,
+            device=self.device,
+            requires_grad=False,
+        )  # num_key_bodies
+        self.ref_body_pos_extend = torch.zeros(
+            self.num_envs,
+            self.num_bodies + self.num_extend_bodies,
+            3,
+            dtype=torch.float,
+            device=self.device,
+            requires_grad=False,
+        )
+        self.dif_global_body_pos = torch.zeros(
+            self.num_envs,
+            self.num_bodies + self.num_extend_bodies,
+            3,
+            dtype=torch.float,
+            device=self.device,
+            requires_grad=False,
+        )
+        self.dif_local_body_pos = torch.zeros(
+            self.num_envs,
+            self.num_bodies + self.num_extend_bodies,
+            3,
+            dtype=torch.float,
+            device=self.device,
+            requires_grad=False,
+        )
 
     def _init_buffers(self):
         super()._init_buffers()
@@ -719,10 +769,14 @@ class LeggedRobotGeneralTracking(LeggedRobotBase):
         )
 
         #####################VR 3 point ########################
-        ref_vr_3point_pos = ref_body_pos_extend.view(env_batch_size, -1, 3)[:, self.motion_tracking_id, :]
-        vr_2root_pos = ref_vr_3point_pos - self.simulator.robot_root_states[:, 0:3].view(env_batch_size, 1, 3)
-        heading_inv_rot_vr = heading_inv_rot.repeat(3, 1)
-        self._obs_vr_3point_pos = my_quat_rotate(heading_inv_rot_vr.view(-1, 4), vr_2root_pos.view(-1, 3)).view(env_batch_size, -1)
+        if len(self.motion_tracking_id) == 0:
+            # No VR tracking points, create zero observation
+            self._obs_vr_3point_pos = torch.zeros(env_batch_size, 0, device=self.device)
+        else:
+            ref_vr_3point_pos = ref_body_pos_extend.view(env_batch_size, -1, 3)[:, self.motion_tracking_id, :]
+            vr_2root_pos = ref_vr_3point_pos - self.simulator.robot_root_states[:, 0:3].view(env_batch_size, 1, 3)
+            heading_inv_rot_vr = heading_inv_rot.repeat(ref_vr_3point_pos.shape[1], 1)
+            self._obs_vr_3point_pos = my_quat_rotate(heading_inv_rot_vr.view(-1, 4), vr_2root_pos.view(-1, 3)).view(env_batch_size, -1)
 
         #################### Deepmimic phase ######################
 
@@ -1163,6 +1217,10 @@ class LeggedRobotGeneralTracking(LeggedRobotBase):
         return r_body_pos
 
     def _reward_teleop_vr_3point(self):
+        # Return zero reward if no motion tracking points
+        if len(self.motion_tracking_id) == 0:
+            return torch.zeros(self.num_envs, device=self.device)
+        
         vr_3point_diff = self.dif_global_body_pos[:, self.motion_tracking_id, :]
         vr_3point_dist = (vr_3point_diff**2).mean(dim=-1).mean(dim=-1)
         # print(f"{vr_3point_dist=}")
@@ -1322,3 +1380,85 @@ class LeggedRobotGeneralTracking(LeggedRobotBase):
             > 5 * torch.abs(self.simulator.contact_forces[:, self.feet_indices, 2]),
             dim=1,
         )
+
+    def _post_physics_step(self):
+        super()._post_physics_step()
+        
+        if self.save_motion:    
+            motion_times = (self.episode_length_buf) * self.dt + self.motion_start_times
+            # print("DEBUG: motion_times",motion_times)
+            if (len(self.motions_for_saving['dof'])) == self.config.save_total_steps+3:
+                self.saved_motion_dict = {}
+                for k, v in self.motions_for_saving.items():
+                    self.saved_motion_dict[k] = torch.stack(v[3:]).transpose(0,1).numpy()
+                    print("DEBUG: ",k,self.saved_motion_dict[k].shape, self.saved_motion_dict[k].dtype)
+                    
+                self.saved_motion_dict['root_trans_offset'] -= self.env_origins.cpu().numpy().reshape(-1, 1, 3)
+                self.saved_motion_dict['motion_times'] = torch.stack(self.motion_times_buf[3:]).transpose(0,1).numpy()
+                
+                dump_data = {}
+                num_motions = self.num_envs 
+                num_frames = len(self.saved_motion_dict['dof'][0])
+                keys_to_save = self.saved_motion_dict.keys()
+
+                # motion_key = f"all_motion{self.num_envs}" 
+                # dump_data[motion_key] = {
+                #     key: self.saved_motion_dict[key] for key in keys_to_save
+                # }
+                # dump_data[motion_key]['fps'] = 1 / self.dt
+                save_path = f"{self.save_motion_dir}_{self.num_envs }x{num_frames}-{self._motion_episode_length}.pkl"
+                
+                print("self._motion_episode_length=", self._motion_episode_length)
+                # breakpoint()
+                if self._write_to_file:
+                    for i in range(num_motions):
+                        motion_key = f"motion{i}" 
+                        dump_data[motion_key] = {
+                            key: self.saved_motion_dict[key][i] for key in keys_to_save
+                        }
+                        dump_data[motion_key]['fps'] = 1 / self.dt
+
+                    joblib.dump(dump_data, save_path, compress=3)
+                    
+                    print(colored(f"Saved motion data to {save_path}", 'green'))
+                else:
+                    print(colored(f"Not saving motion data to {save_path}, because {self._write_to_file=}", 'red'))
+                    
+                    
+                    
+                    
+            root_trans = self.simulator.robot_root_states[:, 0:3].cpu()
+            if self.config.simulator.config.name == "isaacgym":
+                root_rot = self.simulator.robot_root_states[:, 3:7].cpu() # xyzw
+            elif self.config.simulator.config.name == "isaacsim":
+                root_rot = self.simulator.robot_root_states[:, [4, 5, 6, 3]].cpu() # wxyz to xyzw   
+            elif self.config.simulator.config.name == "genesis":
+                root_rot = self.simulator.robot_root_states[:,  3:7].cpu() # xyzw
+            else:
+                raise NotImplementedError
+            root_rot_vec = torch.from_numpy(sRot.from_quat(root_rot.numpy()).as_rotvec()).float() # sRot.from_quat: need xyzw
+            dof = self.simulator.dof_pos.cpu()
+            # T, num_env, J, 3
+            # print(self._motion_lib.mesh_parsers.dof_axis)
+            pose_aa = torch.cat([root_rot_vec[:, None, :], self._motion_lib.mesh_parsers.dof_axis * dof[:, :, None], torch.zeros((self.num_envs, self.num_augment_joint, 3))], axis = 1)
+            self.motions_for_saving['root_trans_offset'].append(root_trans)
+            self.motions_for_saving['root_rot'].append(root_rot)
+            self.motions_for_saving['dof'].append(dof)
+            self.motions_for_saving['pose_aa'].append(pose_aa)
+            self.motions_for_saving['action'].append(self.actions.cpu())
+            self.motions_for_saving['actor_obs'].append(self.obs_buf_dict['actor_obs'].cpu())
+            self.motions_for_saving['terminate'].append(self.reset_buf.cpu())
+            
+            if torch.any(self.reset_buf.cpu()):
+                print("DEBUG: Reset at ",len(self.motions_for_saving['dof']))
+            # else:
+            #     print("DEBUG: No reset at ",len(self.motions_for_saving['dof']),self.reset_buf,motion_times)
+            
+            self.motions_for_saving['dof_vel'].append(self.simulator.dof_vel.cpu())
+            self.motions_for_saving['root_lin_vel'].append(self.simulator.robot_root_states[:, 7:10].cpu())
+            self.motions_for_saving['root_ang_vel'].append(self.simulator.robot_root_states[:, 10:13].cpu())
+            self.motions_for_saving['contact_mask'].append(self.contacts_filt.cpu())
+            
+            self.motion_times_buf.append(motion_times.cpu())
+
+            self.start_save = True

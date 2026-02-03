@@ -340,6 +340,78 @@ class PPO(BaseAlgo):
 
         self.save(os.path.join(self.log_dir, "model_{}.pt".format(self.current_learning_iteration)))
 
+    def _compute_and_log_eval_metrics(self, iteration):
+        """Compute and log evaluation metrics during training
+        
+        Computation strategy:
+        - Action-based metrics (smoothness, rate): Averaged over ROLLOUT TRAJECTORY (24 steps) and ALL ENVS (4096)
+        - State-based metrics (slippage, contact, tracking): INSTANTANEOUS snapshot at rollout end, averaged over ALL ENVS
+        """
+        env = self.env
+        
+        # Get data from storage (last rollout trajectory)
+        actions = self.storage.actions  # [num_steps_per_env=24, num_envs=4096, num_actions]
+        
+        # === Trajectory-based metrics (averaged over rollout) ===
+        
+        # 1. Action smoothness (jerk): (action_t - 2*action_t-1 + action_t-2)^2
+        if actions.shape[0] >= 3:
+            action_jerk = actions[2:] - 2 * actions[1:-1] + actions[:-2]  # [22, 4096, num_actions]
+            action_smoothness = (action_jerk ** 2).mean().item()  # Mean over [steps, envs, actions]
+            self.writer.add_scalar('EvalMetrics/action_smoothness', action_smoothness, iteration)
+        
+        # 2. Action rate: |action_t - action_t-1|
+        if actions.shape[0] >= 2:
+            action_rate = torch.abs(actions[1:] - actions[:-1]).mean().item()  # Mean over [steps, envs, actions]
+            self.writer.add_scalar('EvalMetrics/action_rate', action_rate, iteration)
+        
+        # === Instantaneous metrics (current env state snapshot) ===
+        
+        # 3. Foot slippage (instantaneous)
+        if hasattr(env, 'feet_indices') and hasattr(env.simulator, 'contact_forces'):
+            is_contact = torch.norm(env.simulator.contact_forces[:, env.feet_indices, :], dim=-1) > 1.0  # [4096, 2]
+            foot_vel = env.simulator._rigid_body_vel[:, env.feet_indices, :2]  # [4096, 2, 2]
+            foot_planar_velocity = torch.linalg.norm(foot_vel, dim=-1)  # [4096, 2]
+            slippage = (is_contact * foot_planar_velocity).mean().item()  # Mean over [envs, feet]
+            self.writer.add_scalar('EvalMetrics/foot_slippage_instantaneous', slippage, iteration)
+        
+        # 4. Contact force (instantaneous)
+        if hasattr(env, 'feet_indices') and hasattr(env.simulator, 'contact_forces'):
+            contact_forces = torch.norm(env.simulator.contact_forces[:, env.feet_indices, :], dim=-1)  # [4096, 2]
+            contact_force_mean = contact_forces.mean().item()  # Mean over [envs, feet]
+            contact_force_std = contact_forces.std().item()  # Std over [envs, feet]
+            self.writer.add_scalar('EvalMetrics/contact_force_mean', contact_force_mean, iteration)
+            self.writer.add_scalar('EvalMetrics/contact_force_std', contact_force_std, iteration)
+        
+        # 5. Joint acceleration (instantaneous, compared to previous iteration)
+        if not hasattr(self, '_prev_dof_vel_for_metrics'):
+            self._prev_dof_vel_for_metrics = env.simulator.dof_vel.clone()
+        else:
+            joint_acc = torch.abs(env.simulator.dof_vel - self._prev_dof_vel_for_metrics) / env.dt  # [4096, num_dofs]
+            joint_acc_mean = joint_acc.mean().item()  # Mean over [envs, dofs]
+            self.writer.add_scalar('EvalMetrics/joint_acceleration', joint_acc_mean, iteration)
+            self._prev_dof_vel_for_metrics = env.simulator.dof_vel.clone()
+        
+        # 6. Base angular velocity error (instantaneous)
+        if hasattr(env, '_motion_lib') and hasattr(env, 'base_ang_vel'):
+            motion_times = env.episode_length_buf * env.dt + env.motion_start_times
+            try:
+                motion_res = env._motion_lib.get_motion_state(env.motion_ids, motion_times, env.env_origins)
+                ref_base_ang_vel = motion_res["root_ang_vel"]  # [4096, 3]
+                base_ang_vel_error = torch.norm(ref_base_ang_vel - env.base_ang_vel, dim=-1).mean().item()  # Mean over envs
+                self.writer.add_scalar('EvalMetrics/base_ang_vel_error', base_ang_vel_error, iteration)
+            except:
+                pass
+        
+        # 7. Motion tracking error (instantaneous)
+        if hasattr(env, 'dif_global_body_pos'):
+            motion_tracking_error = torch.norm(env.dif_global_body_pos, dim=-1).mean().item()  # Mean over [envs, bodies]
+            self.writer.add_scalar('EvalMetrics/motion_tracking_global', motion_tracking_error, iteration)
+        
+        if hasattr(env, 'dif_local_body_pos'):
+            motion_tracking_local = torch.norm(env.dif_local_body_pos, dim=-1).mean().item()  # Mean over [envs, bodies]
+            self.writer.add_scalar('EvalMetrics/motion_tracking_local', motion_tracking_local, iteration)
+
     def _actor_rollout_step(self, obs_dict, policy_state_dict):
         if self.train_distill:
             with torch.inference_mode():
@@ -738,6 +810,9 @@ class PPO(BaseAlgo):
         self.tot_timesteps += self.num_steps_per_env * self.env.num_envs
         self.tot_time += log_dict["collection_time"] + log_dict["learn_time"]
         iteration_time = log_dict["collection_time"] + log_dict["learn_time"]
+        
+        # Compute and log evaluation metrics (same as eval_metrics.py)
+        self._compute_and_log_eval_metrics(log_dict["it"])
 
         if log_dict["it"] % self.logging_interval != 0:  # Check report frequency
             return

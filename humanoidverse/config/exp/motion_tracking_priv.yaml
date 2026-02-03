@@ -1,0 +1,14 @@
+# @package _global_
+
+# Motion tracking with privileged encoder and history encoder
+# Uses mh_ppo_priv algo which supports:
+# - priv_encoder: encodes priv_obs to latent (used during training)
+# - history_encoder: encodes prop_history to latent (used during inference)
+# - priv_reg_loss: L2 loss to train priv_encoder to match history_encoder
+
+defaults:
+  - /algo: mh_ppo_priv
+  - /env: motion_tracking
+
+experiment_name: TEST_Motion_Tracking_Priv
+

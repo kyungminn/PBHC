@@ -1,0 +1,61 @@
+# @package _global_
+
+# MHPPO with privileged/history encoder AND motion encoder support
+# Extends mh_ppo_priv to include motion_encoder for future_motion_targets
+
+defaults:
+  - mh_ppo_priv
+
+algo:
+  config:
+    # Latent dimensions
+    priv_latent_dim: 64
+    motion_latent_dim: 128
+
+    module_dict:
+      actor: 
+        # input_dim: actor_obs + motion_latent + priv_latent
+        input_dim: [actor_obs, "${algo.config.motion_latent_dim}", "${algo.config.priv_latent_dim}"]
+        output_dim: [robot_action_dim]
+        layer_config:
+          type: MLP
+          hidden_dims: [512, 256, 128]
+          activation: ELU
+
+        # History encoder for prop_history (used during inference)
+        history_encoder:
+          tsteps: 10
+          input_dim: [prop_history]
+          hidden_dim: 30
+          output_dim: "${algo.config.priv_latent_dim}"
+          layer_config:
+            type: Conv1d
+            activation: SiLU
+
+        # Priv encoder for priv_obs (used during training)
+        priv_encoder:
+          input_dim: [priv_obs]
+          output_dim: ["${algo.config.priv_latent_dim}"]
+          layer_config:
+            type: MLP
+            hidden_dims: [64]
+            activation: SiLU
+
+        # Motion encoder for future_motion_targets
+        motion_encoder:
+          tsteps: 20
+          input_dim: [30]  # root_height(1) + roll_pitch(2) + lin_vel(3) + yaw_vel(1) + dof_pos(23) = 30
+          hidden_dim: 60
+          output_dim: "${algo.config.motion_latent_dim}"
+          layer_config:
+            type: Conv1d
+            activation: SiLU
+
+      critic: 
+        # input_dim: critic_obs + motion_latent + priv_latent
+        input_dim: [critic_obs, "${algo.config.motion_latent_dim}", "${algo.config.priv_latent_dim}"]
+        output_dim: [num_rew_fn]
+        layer_config:
+          type: MLP
+          hidden_dims: [768, 512, 128]
+          activation: ELU

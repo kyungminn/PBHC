@@ -151,6 +151,18 @@ def main(override_config: OmegaConf):
     config.num_envs = 1
     config.env.config.save_rendering_dir = str(checkpoint.parent / "renderings" / f"ckpt_{ckpt_num}")
     config.env.config.ckpt_dir = str(checkpoint.parent) # commented out for now, might need it back to save motion
+    
+    # Configure motion saving before environment instantiation
+    save_inference_motion = config.get("save_inference_motion", False)
+    if save_inference_motion:
+        num_eval_steps = config.get("num_eval_steps", 300)
+        config.env.config.save_motion = True
+        config.env.config.save_total_steps = num_eval_steps
+        config.env.config.save_note = "inference"
+        import time
+        config.env.config.eval_timestamp = time.strftime("%Y%m%d_%H%M%S")
+        logger.info(f"Motion saving configured: {num_eval_steps} steps")
+    
     env = instantiate(config.env, device=device)
 
     # Start a thread to listen for key press
@@ -163,7 +175,7 @@ def main(override_config: OmegaConf):
     algo.load(config.checkpoint)
 
     EXPORT_POLICY = False
-    EXPORT_ONNX = True
+    EXPORT_ONNX = os.environ.get("EXPORT_ONNX", "True").lower() in ("true", "1")
 
     checkpoint_path = str(checkpoint)
 
@@ -194,7 +206,43 @@ def main(override_config: OmegaConf):
 
         logger.info(f'Exported policy as onnx to: {os.path.join(exported_policy_path, exported_onnx_name)}')
 
-    algo.evaluate_policy()
+    # Check if motion saving is enabled and run evaluation
+    if save_inference_motion:
+        # Disable file writing, we'll handle saving manually
+        env._write_to_file = False
+        
+        logger.info(f"Running evaluation for {num_eval_steps} steps to collect motion data...")
+        
+        # Run evaluation for specified number of steps
+        algo.evaluate_policy_steps(num_eval_steps + 5)
+        
+        # Save the motion data to npy file
+        if hasattr(env, 'saved_motion_dict'):
+            import numpy as np
+            inference_motion_dir = checkpoint.parent / "inference_motion"
+            inference_motion_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Convert to format compatible with visualization script
+            # The script expects: root_trans, root_ori, dof_pos, fps
+            motion_data_to_save = {
+                'root_trans': env.saved_motion_dict['root_trans_offset'][0],  # Take first env
+                'root_ori': env.saved_motion_dict['root_rot'][0],  # xyzw format
+                'dof_pos': env.saved_motion_dict['dof'][0],
+                'fps': int(1 / env.dt)
+            }
+            
+            save_path = inference_motion_dir / f"inference_motion_ckpt_{ckpt_num}.npy"
+            np.save(save_path, motion_data_to_save)
+            logger.info(f"Saved inference motion to {save_path}")
+            logger.info(f"  - root_trans shape: {motion_data_to_save['root_trans'].shape}")
+            logger.info(f"  - root_ori shape: {motion_data_to_save['root_ori'].shape}")
+            logger.info(f"  - dof_pos shape: {motion_data_to_save['dof_pos'].shape}")
+            logger.info(f"  - fps: {motion_data_to_save['fps']}")
+        else:
+            logger.warning("saved_motion_dict not found in environment")
+    else:
+        # Normal evaluation mode
+        algo.evaluate_policy()
 
 
 if __name__ == "__main__":

@@ -58,7 +58,12 @@ class ConvEncoder(nn.Module):
         self.output_layer = nn.Linear(layer_config["out_channels"][-1] * 3, self.output_dim)  ## dead
 
     def _build_layer_config(self, base_config, tsteps):
-        if tsteps == 5:
+        if tsteps == 4:
+            out_channels = [20, 10]
+            kernel_sizes = [2, 1]  # (4-2)/1+1=3, then (3-1)/1+1=3
+            strides = [1, 1]
+
+        elif tsteps == 5:
             out_channels = [20, 10]
             kernel_sizes = [2, 2]
             strides = [1, 1]

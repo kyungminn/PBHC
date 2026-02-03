@@ -95,6 +95,9 @@ class MHPPO(BaseAlgo):
         self.cfg_l2c2 = self.config.l2c2  if 'l2c2' in self.config else None
 
         self.num_rew_fn = self.env.num_rew_fn
+        
+        # Check if future_motion_targets is in obs (for motion_encoder support)
+        self.use_motion_encoder = 'future_motion_targets' in self.env.config.obs.obs_dict
 
 
     def setup(self):
@@ -249,6 +252,75 @@ class MHPPO(BaseAlgo):
         
         self.save(os.path.join(self.log_dir, 'model_{}.pt'.format(self.current_learning_iteration)))
 
+    def _compute_and_log_eval_metrics(self, iteration):
+        """Compute and log evaluation metrics during training
+        
+        Note: These are INSTANTANEOUS metrics (current env state snapshot)
+        - Computed at the END of each rollout (after num_steps_per_env steps)
+        - Averaged across all 4096 environments
+        - NOT averaged over the rollout trajectory
+        """
+        env = self.env
+        
+        # Get data from storage (last rollout trajectory)
+        actions = self.storage.actions  # [num_steps_per_env, num_envs, num_actions]
+        
+        # 1. Action smoothness (jerk) - averaged over rollout trajectory
+        if actions.shape[0] >= 3:
+            action_jerk = actions[2:] - 2 * actions[1:-1] + actions[:-2]  # [num_steps-2, num_envs, num_actions]
+            action_smoothness = (action_jerk ** 2).mean().item()  # Mean over steps, envs, actions
+            self.writer.add_scalar('EvalMetrics/action_smoothness', action_smoothness, iteration)
+        
+        # 2. Action rate - averaged over rollout trajectory
+        if actions.shape[0] >= 2:
+            action_rate = torch.abs(actions[1:] - actions[:-1]).mean().item()  # Mean over steps, envs, actions
+            self.writer.add_scalar('EvalMetrics/action_rate', action_rate, iteration)
+        
+        # 3. Foot slippage - instantaneous (current step only)
+        if hasattr(env, 'feet_indices') and hasattr(env.simulator, 'contact_forces'):
+            is_contact = torch.norm(env.simulator.contact_forces[:, env.feet_indices, :], dim=-1) > 1.0
+            foot_vel = env.simulator._rigid_body_vel[:, env.feet_indices, :2]
+            foot_planar_velocity = torch.linalg.norm(foot_vel, dim=-1)
+            slippage = (is_contact * foot_planar_velocity).mean().item()  # Mean over envs
+            self.writer.add_scalar('EvalMetrics/foot_slippage_instantaneous', slippage, iteration)
+        
+        # 4. Contact force - instantaneous (current step only)
+        if hasattr(env, 'feet_indices') and hasattr(env.simulator, 'contact_forces'):
+            contact_forces = torch.norm(env.simulator.contact_forces[:, env.feet_indices, :], dim=-1)
+            contact_force_mean = contact_forces.mean().item()
+            contact_force_std = contact_forces.std().item()
+            self.writer.add_scalar('EvalMetrics/contact_force_mean', contact_force_mean, iteration)
+            self.writer.add_scalar('EvalMetrics/contact_force_std', contact_force_std, iteration)
+        
+        # 5. Joint acceleration - instantaneous (current step only)
+        if not hasattr(self, '_prev_dof_vel_for_metrics'):
+            self._prev_dof_vel_for_metrics = env.simulator.dof_vel.clone()
+        else:
+            joint_acc = torch.abs(env.simulator.dof_vel - self._prev_dof_vel_for_metrics) / env.dt
+            joint_acc_mean = joint_acc.mean().item()
+            self.writer.add_scalar('EvalMetrics/joint_acceleration', joint_acc_mean, iteration)
+            self._prev_dof_vel_for_metrics = env.simulator.dof_vel.clone()
+        
+        # 6. Base angular velocity error - instantaneous
+        if hasattr(env, '_motion_lib') and hasattr(env, 'base_ang_vel'):
+            motion_times = env.episode_length_buf * env.dt + env.motion_start_times
+            try:
+                motion_res = env._motion_lib.get_motion_state(env.motion_ids, motion_times, env.env_origins)
+                ref_base_ang_vel = motion_res["root_ang_vel"]
+                base_ang_vel_error = torch.norm(ref_base_ang_vel - env.base_ang_vel, dim=-1).mean().item()
+                self.writer.add_scalar('EvalMetrics/base_ang_vel_error', base_ang_vel_error, iteration)
+            except:
+                pass
+        
+        # 7. Motion tracking error - instantaneous
+        if hasattr(env, 'dif_global_body_pos'):
+            motion_tracking_error = torch.norm(env.dif_global_body_pos, dim=-1).mean().item()
+            self.writer.add_scalar('EvalMetrics/motion_tracking_global', motion_tracking_error, iteration)
+        
+        if hasattr(env, 'dif_local_body_pos'):
+            motion_tracking_local = torch.norm(env.dif_local_body_pos, dim=-1).mean().item()
+            self.writer.add_scalar('EvalMetrics/motion_tracking_local', motion_tracking_local, iteration)
+
     def _actor_rollout_step(self, obs_dict, policy_state_dict):
         actions = self._actor_act_step(obs_dict)
         policy_state_dict["actions"] = actions
@@ -362,7 +434,11 @@ class MHPPO(BaseAlgo):
             - returns (torch.Tensor): The computed returns for each step.
             - advantages (torch.Tensor): The normalized advantages for each step.
         """
-        last_values= self.critic.evaluate(last_obs_dict["critic_obs"]).detach()
+        if self.use_motion_encoder:
+            motion_embedding = self.actor.motion_encoding(last_obs_dict["future_motion_targets"])
+            last_values = self.critic.evaluate(last_obs_dict["critic_obs"], motion_embedding=motion_embedding).detach()
+        else:
+            last_values = self.critic.evaluate(last_obs_dict["critic_obs"]).detach()
         
         values = policy_state_dict['values']
         dones = policy_state_dict['dones']
@@ -425,9 +501,15 @@ class MHPPO(BaseAlgo):
         return loss_dict
 
     def _actor_act_step(self, obs_dict):
+        if self.use_motion_encoder:
+            motion_embedding = self.actor.motion_encoding(obs_dict["future_motion_targets"])
+            return self.actor.act(obs_dict["actor_obs"], motion_embedding=motion_embedding)
         return self.actor.act(obs_dict["actor_obs"])
     
     def _critic_eval_step(self, obs_dict):
+        if self.use_motion_encoder:
+            motion_embedding = self.actor.motion_encoding(obs_dict["future_motion_targets"])
+            return self.critic.evaluate(obs_dict["critic_obs"], motion_embedding=motion_embedding)
         return self.critic.evaluate(obs_dict["critic_obs"])
     
     def _update_ppo(self, policy_state_dict, loss_dict):
@@ -439,9 +521,17 @@ class MHPPO(BaseAlgo):
         old_mu_batch = policy_state_dict['action_mean']
         old_sigma_batch = policy_state_dict['action_sigma']
 
-        self._actor_act_step(policy_state_dict)
-        actions_log_prob_batch = self.actor.get_actions_log_prob(actions_batch)
-        value_batch = self._critic_eval_step(policy_state_dict)
+        # Forward pass for actor and critic
+        if self.use_motion_encoder:
+            motion_embedding = self.actor.motion_encoding(policy_state_dict["future_motion_targets"])
+            self.actor.act(policy_state_dict["actor_obs"], motion_embedding=motion_embedding)
+            actions_log_prob_batch = self.actor.get_actions_log_prob(actions_batch)
+            # Detach motion_embedding for critic to avoid double backward through motion_encoder
+            value_batch = self.critic.evaluate(policy_state_dict["critic_obs"], motion_embedding=motion_embedding.detach())
+        else:
+            self._actor_act_step(policy_state_dict)
+            actions_log_prob_batch = self.actor.get_actions_log_prob(actions_batch)
+            value_batch = self._critic_eval_step(policy_state_dict)
         mu_batch = self.actor.action_mean
         sigma_batch = self.actor.action_std
         entropy_batch = self.actor.entropy
@@ -495,8 +585,13 @@ class MHPPO(BaseAlgo):
             u_actor_obs = actor_obs + u*(next_actor_obs-actor_obs)
             u_critic_obs = critic_obs + u*(next_critic_obs-critic_obs)
             
-            u_mu = self.actor.act_inference(u_actor_obs)
-            u_value = self.critic.evaluate(u_critic_obs)
+            if self.use_motion_encoder:
+                # For L2C2, we use the same motion_embedding computed earlier
+                u_mu = self.actor.act_inference(u_actor_obs, motion_embedding=motion_embedding)
+                u_value = self.critic.evaluate(u_critic_obs, motion_embedding=motion_embedding.detach())
+            else:
+                u_mu = self.actor.act_inference(u_actor_obs)
+                u_value = self.critic.evaluate(u_critic_obs)
             
             
             l2c2_value_loss = lam_value * (value_batch - u_value).pow(2).mean()
@@ -549,6 +644,9 @@ class MHPPO(BaseAlgo):
         self.tot_timesteps += self.num_steps_per_env * self.env.num_envs
         self.tot_time += log_dict['collection_time'] + log_dict['learn_time']
         iteration_time = log_dict['collection_time'] + log_dict['learn_time']
+        
+        # Compute and log evaluation metrics (same as eval_metrics.py)
+        self._compute_and_log_eval_metrics(log_dict['it'])
         
         if log_dict['it'] % self.logging_interval != 0:  # Check report frequency
             return
@@ -758,7 +856,11 @@ class MHPPO(BaseAlgo):
             c.on_post_evaluate_policy()
 
     def _pre_eval_env_step(self, actor_state: dict):
-        actions = self.eval_policy(actor_state["obs"]['actor_obs'])
+        if self.use_motion_encoder:
+            motion_embedding = self.actor.motion_encoding(actor_state["obs"]['future_motion_targets'])
+            actions = self.eval_policy(actor_state["obs"]['actor_obs'], motion_embedding=motion_embedding)
+        else:
+            actions = self.eval_policy(actor_state["obs"]['actor_obs'])
         actor_state.update({"actions": actions})
         for c in self.eval_callbacks:
             actor_state = c.on_pre_eval_env_step(actor_state)

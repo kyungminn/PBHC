@@ -1,0 +1,74 @@
+# @package _global_
+
+# mh_ppo with motion_encoder support for future_motion_targets
+# Use this when obs config has future_motion_targets
+
+algo:
+  _target_: humanoidverse.agents.mh_ppo.mh_ppo.MHPPO
+  _recursive_: False
+  config:
+    num_learning_epochs: 5
+    num_mini_batches: 4
+    clip_param: 0.2
+    gamma: 0.99
+    lam: 0.95
+    value_loss_coef: 1.0
+    entropy_coef: 0.01
+    l2c2:
+      enable: False
+      lambda_value: 1.0
+      lambda_policy: 0.1
+
+    actor_learning_rate: 1.e-3
+    critic_learning_rate: 1.e-3
+    max_grad_norm: 1.0
+    use_clipped_value_loss: True
+    schedule: "adaptive"
+    desired_kl: 0.01
+
+    num_steps_per_env: 24
+    save_interval: 1000
+    logging_interval: 25
+
+    load_optimizer: True
+
+    init_noise_std: 0.8
+
+    num_learning_iterations: 1000000
+    init_at_random_ep_len: True
+    eval_callbacks: null
+
+    phase_embed:
+      type: Original
+      dim: 16
+
+    module_dict:
+      actor: 
+        # input_dim includes actor_obs + motion_encoder output
+        input_dim: [actor_obs, "${algo.config.module_dict.actor.motion_encoder.output_dim}"]
+        output_dim: [robot_action_dim]
+        layer_config:
+          type: MLP
+          hidden_dims: [512, 256, 128]
+          activation: ELU
+        
+        # Motion encoder for future_motion_targets
+        # input_dim is per-step dim: root_height(1) + roll_pitch(2) + lin_vel(3) + yaw_vel(1) + dof_pos(dof_size)
+        # For G1 23dof: 1+2+3+1+23 = 30
+        motion_encoder:
+          tsteps: 20
+          input_dim: [30]
+          hidden_dim: 60
+          output_dim: 128
+          layer_config:
+            type: Conv1d
+            activation: SiLU
+      
+      critic: 
+        # input_dim includes critic_obs + motion_encoder output (shared with actor)
+        input_dim: [critic_obs, "${algo.config.module_dict.actor.motion_encoder.output_dim}"]
+        output_dim: [num_rew_fn]
+        layer_config:
+          type: MLP
+          hidden_dims: [768, 512, 128]
+          activation: ELU
