@@ -9,13 +9,11 @@ python -c "from humanoidverse.agents.callbacks.analysis_plot_motion_tracking imp
 # Set HYDRA_FULL_ERROR for detailed error messages
 export HYDRA_FULL_ERROR=1
 
-# Optional: Set custom save path by uncommenting and modifying the line below
-# SAVE_PATH="your/custom/path/results.txt"
-
 python humanoidverse/eval_metrics.py \
     +device=cuda:0 \
     +headless=True \
     +num_eval_steps=600 \
     +env.config.enforce_randomize_motion_start_eval=False \
-    +checkpoint=/home/kyungminlee/PBHC/logs/MotionTracking/20260130_054121-g1_walk_45cms_23dof_ablation_future_same_as_teacher-motion_tracking-g1_23dof_lock_wrist/model_20000.pt \
-    ++metrics_save_path=./ablation_results/default_add_future_motion.txt
+    +checkpoint=/home/kyungminlee/PBHC/logs/MotionTracking/20260203_093709-kungfubot2_teacher_walk_45cms_29dof_no_hands_with_kungfubot1_robot_config-motion_tracking-g1_29dof/model_17000.pt \
+    ++metrics_save_path=./ablation_results/robot_config/kungfubot2_teacher_no_hands_with_kungfubot1_robot.txt
+

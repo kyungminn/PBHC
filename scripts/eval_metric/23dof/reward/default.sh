@@ -17,5 +17,5 @@ python humanoidverse/eval_metrics.py \
     +headless=True \
     +num_eval_steps=600 \
     +env.config.enforce_randomize_motion_start_eval=False \
-    +checkpoint=logs/MotionTracking/20260129_062702-g1_walk_45cms-motion_tracking-g1_23dof_lock_wrist/model_20000.pt \
-    ++metrics_save_path=./ablation_results/default.txt
+    +checkpoint=/home/kyungminlee/PBHC/logs/MotionTracking/20260203_072824-g1_walk_45cms_add_penalty_dof_acc-motion_tracking-g1_23dof_lock_wrist/model_20000.pt \
+    ++metrics_save_path=./ablation_results/reward/kungfubot1_add_penalty_dof_acc.txt

@@ -6,8 +6,8 @@ python humanoidverse/train_agent.py \
     +robot=g1/g1_23dof_lock_wrist \
     +domain_rand=main \
     +rewards=motion_tracking/main \
-    experiment_name=g1_walk_45cms \
-    robot.motion.motion_file="motion_data/g1_walk_45cms_processed_g1_23dof_lock_wrist.pkl" \
+    experiment_name=kungfubot1_baseball_batter \
+    robot.motion.motion_file="motion_data/baseball_batter_23dof.pkl" \
     seed=1 \
     +device=cuda:0 \
     +opt=wandb \

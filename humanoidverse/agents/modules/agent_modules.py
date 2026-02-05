@@ -28,11 +28,14 @@ class Actor(nn.Module):
 
         new_obs_dim_dict = obs_dim_dict.copy()
 
-        self.motion_encoder = ConvEncoder(
-            obs_dim_dict,
-            actor_module_config_dict.motion_encoder,
-            actor_module_config_dict.motion_encoder.tsteps,
-        )
+        if getattr(actor_module_config_dict, "motion_encoder", None) is not None:
+            self.motion_encoder = ConvEncoder(
+                obs_dim_dict,
+                actor_module_config_dict.motion_encoder,
+                actor_module_config_dict.motion_encoder.tsteps,
+            )
+        else:
+            self.motion_encoder = None
 
         if getattr(actor_module_config_dict, "history_encoder", None) is not None:
             new_obs_dim_dict["prop_history"] //= actor_module_config_dict.history_encoder.tsteps
@@ -56,8 +59,10 @@ class Actor(nn.Module):
         return module_config_dict
 
     def motion_encoding(self, motion_obs):
-        motion_embedding = self.motion_encoder(motion_obs)
-        return motion_embedding
+        if self.motion_encoder is not None:
+            motion_embedding = self.motion_encoder(motion_obs)
+            return motion_embedding
+        return None
 
     def history_encoding(self, history_obs):
         history_embedding = self.history_encoder(history_obs)
@@ -68,14 +73,20 @@ class Actor(nn.Module):
         return priv_embedding
 
     def forward(self, obs_dict, hist_encoding: bool, obs_key="actor_obs", target_key="future_motion_targets"):
-        motion_embedding = self.motion_encoding(obs_dict[target_key])
+        motion_embedding = self.motion_encoding(obs_dict.get(target_key, None))
 
         if hist_encoding:
             latent = self.history_encoding(obs_dict["prop_history"])
         else:
             latent = self.priv_encoding(obs_dict["priv_obs"])
 
-        actor_obs = torch.cat([obs_dict[obs_key], motion_embedding, latent], dim=-1)
+        # Concatenate only non-None embeddings
+        obs_components = [obs_dict[obs_key]]
+        if motion_embedding is not None:
+            obs_components.append(motion_embedding)
+        obs_components.append(latent)
+        
+        actor_obs = torch.cat(obs_components, dim=-1)
         backbone_output = self.actor_module(actor_obs)
         return backbone_output
 
@@ -161,6 +172,12 @@ class ActorCritic(nn.Module):
         return actions_mean
 
     def evaluate(self, obs, obs_key="actor_obs", **kwargs):
-        motion_embedding = self.actor.motion_encoding(obs["future_motion_targets"])
-        critic_obs = torch.cat([obs[obs_key], obs["priv_obs"], motion_embedding], dim=-1)
+        motion_embedding = self.actor.motion_encoding(obs.get("future_motion_targets", None))
+        
+        # Concatenate only non-None embeddings
+        critic_obs_components = [obs[obs_key], obs["priv_obs"]]
+        if motion_embedding is not None:
+            critic_obs_components.append(motion_embedding)
+        
+        critic_obs = torch.cat(critic_obs_components, dim=-1)
         return self.critic(critic_obs)

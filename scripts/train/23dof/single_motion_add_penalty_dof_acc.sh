@@ -6,10 +6,11 @@ python humanoidverse/train_agent.py \
     +robot=g1/g1_23dof_lock_wrist \
     +domain_rand=main \
     +rewards=motion_tracking/main \
-    experiment_name=g1_walk_45cms \
+    experiment_name=g1_walk_45cms_add_penalty_dof_acc \
     robot.motion.motion_file="motion_data/g1_walk_45cms_processed_g1_23dof_lock_wrist.pkl" \
     seed=1 \
     +device=cuda:0 \
     +opt=wandb \
     wandb.wandb_group='ablation' \
-    rewards.reward_scales.teleop_contact_mask=0 
+    rewards.reward_scales.teleop_contact_mask=0 \
+    +rewards.reward_scales.penalty_dof_acc=-3e-7
